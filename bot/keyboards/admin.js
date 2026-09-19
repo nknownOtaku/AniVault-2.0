@@ -53,12 +53,12 @@ export function getAniListSearchKeyboard(results, page = 1) {
 
 /**
  * Anime details keyboard
- * @param {number} anilistId - AniList ID
+ * @param {string} animeId - Internal anime ID (anime.id)
  */
-export function getAnimeDetailsKeyboard(anilistId) {
+export function getAnimeDetailsKeyboard(animeId) {
   return {
     inline_keyboard: [
-      [{ text: '➕ Add Season', callback_data: `add_season_${anilistId}` }],
+      [{ text: '➕ Add Season', callback_data: `add_season_${animeId}` }],
       [{ text: '🔙 Back', callback_data: 'admin_add_anime' }]
     ]
   };
