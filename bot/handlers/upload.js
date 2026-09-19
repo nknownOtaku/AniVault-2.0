@@ -582,27 +582,16 @@ export async function handleViewEpisode(callbackQuery, episodeId) {
   }
 
   try {
-    // maybeSingle() returns null on zero rows instead of erroring, so a missing
-    // episode produces a clean "not found" rather than a thrown exception.
-    const { data: episode, error } = await supabase
+    // Resolve each relationship explicitly. This avoids PostgREST relationship
+    // alias differences between Supabase projects while keeping the same view.
+    const { data: episode, error: episodeError } = await supabase
       .from('episodes')
-      .select(`
-        *,
-        season (
-          id,
-          name,
-          anime (
-            id,
-            title
-          )
-        ),
-        files (*)
-      `)
+      .select('id, season_id, episode_number, title, description')
       .eq('id', episodeId)
       .maybeSingle();
 
-    if (error) {
-      console.error('Error fetching episode:', episodeId, error);
+    if (episodeError) {
+      console.error('Error fetching episode:', episodeId, episodeError);
       await editMessageText(chatId, messageId, '❌ Error retrieving episode details.');
       return;
     }
@@ -612,9 +601,43 @@ export async function handleViewEpisode(callbackQuery, episodeId) {
       return;
     }
 
-    const animeTitle = episode.season?.anime?.title || 'Unknown';
-    const seasonName = episode.season?.name || 'Unknown';
-    const files = episode.files || [];
+    const { data: season, error: seasonError } = await supabase
+      .from('seasons')
+      .select('id, name, anime_id')
+      .eq('id', episode.season_id)
+      .maybeSingle();
+
+    const { data: files, error: filesError } = await supabase
+      .from('files')
+      .select('*')
+      .eq('episode_id', episode.id)
+      .order('quality', { ascending: true });
+
+    if (seasonError || filesError) {
+      console.error('Error fetching episode relationships:', episodeId, seasonError || filesError);
+      await editMessageText(chatId, messageId, '❌ Error retrieving episode details.');
+      return;
+    }
+
+    let anime = null;
+    if (season?.anime_id) {
+      const { data: animeData, error: animeError } = await supabase
+        .from('anime')
+        .select('id, title')
+        .eq('id', season.anime_id)
+        .maybeSingle();
+
+      if (animeError) {
+        console.error('Error fetching episode anime:', episodeId, animeError);
+        await editMessageText(chatId, messageId, '❌ Error retrieving episode details.');
+        return;
+      }
+
+      anime = animeData;
+    }
+
+    const animeTitle = anime?.title || 'Unknown';
+    const seasonName = season?.name || 'Unknown';
 
     let filesText = '';
     files.forEach((file) => {
@@ -646,7 +669,7 @@ Use a file ID above to generate an access token or download.
     keyboard.inline_keyboard.push(
       [{ text: '🔑 Generate Episode Token', callback_data: `generate_token_episode_${episodeId}` }],
       [{ text: '🗑 Delete Episode', callback_data: `delete_episode_confirm_${episodeId}` }],
-      [{ text: '🔙 Back', callback_data: `view_season_${episode.season?.id || ''}` }]
+      [{ text: '🔙 Back', callback_data: `view_season_${season?.id || ''}` }]
     );
 
     await editMessageText(chatId, messageId, text, {
