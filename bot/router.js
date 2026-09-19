@@ -3,67 +3,30 @@ import { handleAnimeCallback, handleAnimeMessage } from './handlers/anime.js';
 import { handleSeasonCallback, handleSeasonNameInput } from './handlers/season.js';
 import { handleFileUpload, handleUploadDone, handleConfirmUpload, handleCancelUpload, handleViewEpisode } from './handlers/upload.js';
 import { sendMessage, answerCallbackQuery } from '../lib/telegram.js';
-import { supabase } from '../lib/supabase.js';
+import { getAdminState, setAdminState, BotState } from '../lib/session.js';
+
+// Re-export the state machine so existing imports keep working.
+export { BotState };
 
 /**
- * Bot state machine states
- */
-export const BotState = {
-  IDLE: 'IDLE',
-  WAITING_ANIME_TITLE: 'WAITING_ANIME_TITLE',
-  SELECTING_ANIME: 'SELECTING_ANIME',
-  VIEWING_ANIME: 'VIEWING_ANIME',
-  ADDING_SEASON: 'ADDING_SEASON',
-  WAITING_SEASON_NAME: 'WAITING_SEASON_NAME',
-  WAITING_FILES: 'WAITING_FILES',
-  REVIEWING_UPLOAD: 'REVIEWING_UPLOAD'
-};
-
-/**
- * Get or create admin session
+ * Get the admin session for a user (or null when none exists yet).
+ * Thin wrapper over the shared session helper so the rest of the router
+ * keeps its existing call sites.
  * @param {number} userId - Telegram user ID
  */
 async function getAdminSession(userId) {
-  const { data: session } = await supabase
-    .from('admin_sessions')
-    .select('*')
-    .eq('telegram_user_id', userId)
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .single();
-
-  if (!session) {
-    // Create new session
-    const { data: newSession } = await supabase
-      .from('admin_sessions')
-      .insert({
-        telegram_user_id: userId,
-        state: BotState.IDLE,
-        data: {}
-      })
-      .select()
-      .single();
-    
-    return newSession;
-  }
-
-  return session;
+  return getAdminState(userId);
 }
 
 /**
- * Update admin session state
- * @param {number} sessionId - Session ID
+ * Update admin session state.
+ * @param {number} userId - Telegram user ID
  * @param {string} state - New state
  * @param {object} data - Additional data
+ * @param {number|string} [chatId] - Telegram chat ID
  */
-async function updateAdminSession(sessionId, state, data = {}) {
-  await supabase
-    .from('admin_sessions')
-    .update({
-      state,
-      data: data
-    })
-    .eq('id', sessionId);
+async function updateAdminSession(userId, state, data = {}, chatId = null) {
+  await setAdminState(userId, chatId, state, data);
 }
 
 /**
@@ -88,7 +51,7 @@ export async function routeMessage(message) {
   // Handle /start command
   if (message.text === '/start' || message.text?.startsWith('/start ')) {
     await handleStart(message);
-    await updateAdminSession(session.id, BotState.IDLE);
+    await updateAdminSession(userId, BotState.IDLE, {}, chatId);
     return;
   }
 

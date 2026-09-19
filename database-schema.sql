@@ -111,13 +111,17 @@ CREATE TABLE IF NOT EXISTS start_tokens (
 -- ============================================
 CREATE TABLE IF NOT EXISTS admin_sessions (
     id TEXT PRIMARY KEY,
-    telegram_user_id TEXT NOT NULL,
+    telegram_user_id TEXT NOT NULL UNIQUE,
     chat_id TEXT,
     state TEXT NOT NULL DEFAULT 'IDLE',
     data JSONB DEFAULT '{}',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+-- Ensure one active session row per admin (safe to run on existing tables).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_admin_sessions_telegram_user_id_unique
+    ON admin_sessions(telegram_user_id);
 
 -- ============================================
 -- UPLOAD SESSIONS TABLE
@@ -155,7 +159,8 @@ CREATE INDEX IF NOT EXISTS idx_episodes_season_id ON episodes(season_id);
 CREATE INDEX IF NOT EXISTS idx_files_episode_id ON files(episode_id);
 CREATE INDEX IF NOT EXISTS idx_anime_languages_anime_id ON anime_languages(anime_id);
 CREATE INDEX IF NOT EXISTS idx_start_tokens_token ON start_tokens(token);
-CREATE INDEX IF NOT EXISTS idx_admin_sessions_telegram_user_id ON admin_sessions(telegram_user_id);
+-- idx_admin_sessions_telegram_user_id is created as a UNIQUE index above,
+-- which already covers this lookup and enforces one session per admin.
 CREATE INDEX IF NOT EXISTS idx_upload_sessions_telegram_user_id ON upload_sessions(telegram_user_id);
 CREATE INDEX IF NOT EXISTS idx_upload_files_upload_session_id ON upload_files(upload_session_id);
 

@@ -1,6 +1,7 @@
 import { sendMessage, editMessageText, answerCallbackQuery } from '../../lib/telegram.js';
 import { supabase } from '../../lib/supabase.js';
 import { generateId } from '../../lib/tokens.js';
+import { setAdminState, BotState } from '../../lib/session.js';
 
 /**
  * Handle season-related callbacks
@@ -22,10 +23,10 @@ export async function handleSeasonCallback(callbackQuery) {
   // Parse callback data
   if (data.startsWith('add_season_')) {
     const anilistId = data.replace('add_season_', '');
-    await handleAddSeason(chatId, messageId, anilistId);
+    await handleAddSeason(chatId, messageId, userId, anilistId);
   } else if (data.startsWith('add_season_db_')) {
     const animeId = data.replace('add_season_db_', '');
-    await handleAddSeasonDb(chatId, messageId, animeId);
+    await handleAddSeasonDb(chatId, messageId, userId, animeId);
   } else if (data.startsWith('view_season_')) {
     const seasonId = data.replace('view_season_', '');
     await handleViewSeason(chatId, messageId, seasonId);
@@ -43,7 +44,7 @@ export async function handleSeasonCallback(callbackQuery) {
 /**
  * Handle add season (from AniList selection)
  */
-async function handleAddSeason(chatId, messageId, anilistId) {
+async function handleAddSeason(chatId, messageId, userId, anilistId) {
   // First, we need to create or get the anime record
   try {
     const { data: animeData } = await supabase
@@ -70,7 +71,9 @@ Example:
 <code>Season 1</code>
 `;
 
-    // TODO: Set bot state to WAITING_SEASON_NAME
+    // Persist state so the next text message is treated as the season name.
+    await setAdminState(userId, chatId, BotState.WAITING_SEASON_NAME, { anime_id: animeId });
+
     await editMessageText(chatId, messageId, text);
   } catch (error) {
     console.error('Error adding season:', error);
@@ -81,7 +84,10 @@ Example:
 /**
  * Handle add season from database anime
  */
-async function handleAddSeasonDb(chatId, messageId, animeId) {
+async function handleAddSeasonDb(chatId, messageId, userId, animeId) {
+  // Persist state so the next text message is treated as the season name.
+  await setAdminState(userId, chatId, BotState.WAITING_SEASON_NAME, { anime_id: animeId });
+
   const text = `
 <b>Add Season</b>
 
@@ -91,7 +97,6 @@ Example:
 <code>Season 1</code>
 `;
 
-  // TODO: Set bot state to WAITING_SEASON_NAME with animeId
   await editMessageText(chatId, messageId, text);
 }
 
@@ -242,6 +247,7 @@ async function handleDeleteSeason(chatId, messageId, seasonId) {
  */
 export async function handleSeasonNameInput(message, animeId) {
   const chatId = message.chat.id;
+  const userId = message.from.id;
   const seasonName = message.text.trim();
 
   if (!seasonName) {
@@ -252,7 +258,7 @@ export async function handleSeasonNameInput(message, animeId) {
   try {
     // Create season
     const seasonId = generateId('SEA');
-    
+
     const { data: season, error } = await supabase
       .from('seasons')
       .insert({
@@ -287,7 +293,8 @@ You can send multiple files. When you are finished, click:
       reply_markup: keyboard
     });
 
-    // TODO: Set bot state to WAITING_FILES with seasonId
+    // Move into the file-upload state, binding the new season to the session.
+    await setAdminState(userId, chatId, BotState.WAITING_FILES, { season_id: seasonId });
   } catch (error) {
     console.error('Error creating season:', error);
     await sendMessage(chatId, '❌ Error creating season.');

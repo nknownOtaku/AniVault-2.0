@@ -2,6 +2,7 @@ import { sendMessage, editMessageText, answerCallbackQuery } from '../../lib/tel
 import { getAniListSearchKeyboard, getAnimeDetailsKeyboard } from '../keyboards/admin.js';
 import { searchAnime, getAnimeDetails } from '../../lib/anilist.js';
 import { supabase } from '../../lib/supabase.js';
+import { setAdminState, getAdminState, BotState } from '../../lib/session.js';
 
 /**
  * Handle callback queries related to anime management
@@ -22,14 +23,14 @@ export async function handleAnimeCallback(callbackQuery) {
 
   // Parse callback data
   if (data === 'admin_add_anime') {
-    await handleAddAnime(chatId, messageId);
+    await handleAddAnime(chatId, messageId, userId);
   } else if (data.startsWith('anilist_page_')) {
     const page = parseInt(data.replace('anilist_page_', ''), 10);
-    await handleAniListPage(chatId, messageId, page);
+    await handleAniListPage(chatId, messageId, userId, page);
   } else if (data.startsWith('anilist_select_')) {
     const parts = data.replace('anilist_select_', '').split('_');
     const anilistId = parseInt(parts[0], 10);
-    await handleAniListSelect(chatId, messageId, anilistId);
+    await handleAniListSelect(chatId, messageId, userId, anilistId);
   } else if (data === 'admin_list_anime') {
     await handleListAnime(chatId, messageId);
   } else if (data.startsWith('view_anime_')) {
@@ -43,7 +44,10 @@ export async function handleAnimeCallback(callbackQuery) {
 /**
  * Handle add anime action
  */
-async function handleAddAnime(chatId, messageId) {
+async function handleAddAnime(chatId, messageId, userId) {
+  // Persist the state so the next text message is routed as an anime title.
+  await setAdminState(userId, chatId, BotState.WAITING_ANIME_TITLE, {});
+
   const text = `
 <b>Add New Anime</b>
 
@@ -59,19 +63,29 @@ Example:
 /**
  * Handle AniList pagination
  */
-async function handleAniListPage(chatId, messageId, page) {
-  // Get the current search term from session or context
-  // For now, we'll just show a message
-  await editMessageText(chatId, messageId, `📄 Page ${page}\n\nSearching AniList... (Implementation continues)`);
+async function handleAniListPage(chatId, messageId, userId, page) {
+  const session = await getAdminState(userId);
+  const searchTerm = session?.data?.searchTerm;
+
+  if (!searchTerm) {
+    await editMessageText(
+      chatId,
+      messageId,
+      '❌ Search context expired. Please start over with /start.'
+    );
+    return;
+  }
+
+  await renderAniListResults(chatId, messageId, userId, searchTerm, page);
 }
 
 /**
  * Handle AniList selection
  */
-async function handleAniListSelect(chatId, messageId, anilistId) {
+async function handleAniListSelect(chatId, messageId, userId, anilistId) {
   try {
     const details = await getAnimeDetails(anilistId);
-    
+
     const title = details.title.english || details.title.romaji || 'Unknown';
     const nativeTitle = details.title.native || '';
     const format = details.format || 'Unknown';
@@ -98,6 +112,9 @@ Ready to add a season.
     await editMessageText(chatId, messageId, text, {
       reply_markup: getAnimeDetailsKeyboard(anilistId)
     });
+
+    // We've moved past the search list into viewing a specific anime.
+    await setAdminState(userId, chatId, BotState.VIEWING_ANIME, { anilistId });
   } catch (error) {
     console.error('Error getting anime details:', error);
     await editMessageText(chatId, messageId, '❌ Error fetching anime details from AniList.');
@@ -203,40 +220,78 @@ Select a season to manage or add a new one.
  */
 export async function handleAnimeMessage(message, state) {
   const chatId = message.chat.id;
+  const userId = message.from.id;
   const text = message.text;
 
-  if (state === 'WAITING_ANIME_TITLE') {
-    await handleAnimeTitleInput(chatId, text);
+  if (state === BotState.WAITING_ANIME_TITLE) {
+    await handleAnimeTitleInput(chatId, userId, text);
+  }
+}
+
+/**
+ * Search AniList and render the results list.
+ * Stores the search term and page on the admin session so the Next/Previous
+ * buttons know what to re-query.
+ *
+ * @param {number} chatId - Telegram chat ID
+ * @param {number} messageId - Message ID to edit (null to send a new message)
+ * @param {number} userId - Telegram user ID
+ * @param {string} searchTerm - AniList search query
+ * @param {number} page - Results page
+ */
+async function renderAniListResults(chatId, messageId, userId, searchTerm, page) {
+  const results = await searchAnime(searchTerm, page);
+
+  if (!results || results.length === 0) {
+    const emptyText = '❌ No more results found. Please try a different title.';
+    if (messageId) {
+      await editMessageText(chatId, messageId, emptyText);
+    } else {
+      await sendMessage(chatId, emptyText);
+    }
+    return;
+  }
+
+  // Persist the current search context so pagination works.
+  await setAdminState(userId, chatId, BotState.SELECTING_ANIME, {
+    searchTerm,
+    page
+  });
+
+  const keyboard = getAniListSearchKeyboard(results, page);
+
+  let resultText = `🔍 <b>Search Results</b> (page ${page})\n\nSelect the correct anime:\n\n`;
+  results.forEach((anime, index) => {
+    const animeTitle = anime.title.english || anime.title.romaji || 'Unknown';
+    const format = anime.format || 'Unknown';
+    const episodes = anime.episodes || '?';
+    resultText += `${index + 1}. <b>${animeTitle}</b> (${format}, ${episodes} eps)\n`;
+  });
+
+  const options = { reply_markup: keyboard };
+
+  if (messageId) {
+    await editMessageText(chatId, messageId, resultText, options);
+  } else {
+    await sendMessage(chatId, resultText, options);
   }
 }
 
 /**
  * Handle anime title input
  */
-async function handleAnimeTitleInput(chatId, title) {
+async function handleAnimeTitleInput(chatId, userId, title) {
   try {
-    await sendMessage(chatId, `🔍 Searching AniList for "<b>${title}</b>"...`);
-    
-    const results = await searchAnime(title);
-    
-    if (!results || results.length === 0) {
-      await sendMessage(chatId, '❌ No results found. Please try a different title.');
+    if (!title || !title.trim()) {
+      await sendMessage(chatId, '❌ Please enter a valid anime title.');
       return;
     }
 
-    const keyboard = getAniListSearchKeyboard(results, 1);
-    
-    let resultText = '<b>Search Results</b>\n\nSelect the correct anime:\n\n';
-    results.forEach((anime, index) => {
-      const animeTitle = anime.title.english || anime.title.romaji;
-      const format = anime.format || 'Unknown';
-      const episodes = anime.episodes || '?';
-      resultText += `${index + 1}. <b>${animeTitle}</b> (${format}, ${episodes} eps)\n`;
-    });
+    const searchTerm = title.trim();
 
-    await sendMessage(chatId, resultText, {
-      reply_markup: keyboard
-    });
+    await sendMessage(chatId, `🔍 Searching AniList for "<b>${searchTerm}</b>"...`);
+
+    await renderAniListResults(chatId, null, userId, searchTerm, 1);
   } catch (error) {
     console.error('Error searching AniList:', error);
     await sendMessage(chatId, '❌ Error searching AniList. Please try again.');
