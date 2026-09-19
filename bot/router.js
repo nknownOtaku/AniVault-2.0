@@ -1,7 +1,8 @@
 import { handleStart } from './handlers/start.js';
 import { handleAnimeCallback, handleAnimeMessage } from './handlers/anime.js';
 import { handleSeasonCallback, handleSeasonNameInput } from './handlers/season.js';
-import { handleFileUpload, handleUploadDone, handleConfirmUpload, handleCancelUpload, handleViewEpisode, handleGenerateToken } from './handlers/upload.js';
+import { handleFileUpload, handleUploadDone, handleConfirmUpload, handleCancelUpload, handleViewEpisode, handleGenerateToken, handleDuplicateStrategy } from './handlers/upload.js';
+import { handleDeleteCallback } from './handlers/delete.js';
 import { sendMessage, answerCallbackQuery } from '../lib/telegram.js';
 import { getAdminState, setAdminState, BotState } from '../lib/session.js';
 
@@ -37,9 +38,22 @@ export async function routeMessage(message) {
   const userId = message.from.id;
   const chatId = message.chat.id;
 
-  // Verify admin
-  const adminId = process.env.TELEGRAM_ADMIN_ID;
-  if (String(userId) !== String(adminId)) {
+  const isAdmin = String(userId) === String(process.env.TELEGRAM_ADMIN_ID);
+
+  // /start is handled before the admin gate: plain `/start` shows the admin
+  // menu to the admin (and is refused inside the handler for everyone else),
+  // while `/start <token>` is the *user-facing* entry point and must be
+  // reachable by any Telegram user holding a valid token.
+  if (message.text === '/start' || message.text?.startsWith('/start ')) {
+    await handleStart(message);
+    if (isAdmin) {
+      await updateAdminSession(userId, BotState.IDLE, {}, chatId);
+    }
+    return;
+  }
+
+  // Every other message is an admin-only action.
+  if (!isAdmin) {
     await sendMessage(chatId, '⛔ Access denied. Only administrators can use this bot.');
     return;
   }
@@ -47,13 +61,6 @@ export async function routeMessage(message) {
   // Get session
   const session = await getAdminSession(userId);
   const currentState = session?.state || BotState.IDLE;
-
-  // Handle /start command
-  if (message.text === '/start' || message.text?.startsWith('/start ')) {
-    await handleStart(message);
-    await updateAdminSession(userId, BotState.IDLE, {}, chatId);
-    return;
-  }
 
   // Handle text messages based on state
   if (message.text) {
@@ -102,10 +109,16 @@ export async function routeCallback(callbackQuery) {
   // Get session
   const session = await getAdminSession(userId);
 
-  // Route based on callback data prefix
-  if (data.startsWith('admin_') || data.startsWith('anilist_') || data.startsWith('view_anime_') || data.startsWith('back_to_anime') || data.startsWith('delete_anime_') || data.startsWith('cancel_delete_anime_')) {
+  // Route based on callback data prefix.
+  //
+  // Order matters: episode and file deletion prefixes (@see delete.js) must be
+  // checked before the broader season/upload branches, otherwise a callback
+  // such as `delete_episode_confirm_...` would fall into the wrong handler.
+  if (data.startsWith('delete_episode_') || data.startsWith('cancel_delete_episode_') || data.startsWith('delete_file_') || data.startsWith('cancel_delete_file_')) {
+    await handleDeleteCallback(callbackQuery);
+  } else if (data.startsWith('admin_') || data.startsWith('anilist_') || data.startsWith('view_anime_') || data.startsWith('back_to_anime') || data.startsWith('delete_anime_') || data.startsWith('cancel_delete_anime_')) {
     await handleAnimeCallback(callbackQuery);
-  } else if (data.startsWith('add_season_') || data.startsWith('view_season_') || data.startsWith('delete_season') || data.startsWith('add_episode_') || data.startsWith('back_to_seasons')) {
+  } else if (data.startsWith('add_season_') || data.startsWith('view_season_') || data.startsWith('delete_season') || data.startsWith('cancel_delete_season_') || data.startsWith('add_episode_') || data.startsWith('back_to_seasons')) {
     await handleSeasonCallback(callbackQuery);
   } else if (data.startsWith('view_episode_') || data.startsWith('back_to_episodes')) {
     await handleViewEpisode(callbackQuery, data.replace('view_episode_', ''));
@@ -115,6 +128,12 @@ export async function routeCallback(callbackQuery) {
     await handleUploadDone(callbackQuery, session.data?.upload_session_id);
   } else if (data === 'confirm_upload') {
     await handleConfirmUpload(callbackQuery, session.data?.upload_session_id, session.data?.season_id);
+  } else if (data === 'duplicate_overwrite_all') {
+    await handleDuplicateStrategy(callbackQuery, 'overwrite_all');
+  } else if (data === 'duplicate_ignore_all') {
+    await handleDuplicateStrategy(callbackQuery, 'ignore_all');
+  } else if (data === 'duplicate_review') {
+    await answerCallbackQuery(callbackQuery.id, 'Per-file review not available yet - choose Overwrite All or Ignore All.');
   } else if (data === 'cancel_upload') {
     await handleCancelUpload(callbackQuery, session.data?.upload_session_id);
   } else if (data === 'edit_upload') {

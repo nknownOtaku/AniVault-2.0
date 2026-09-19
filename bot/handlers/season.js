@@ -170,6 +170,9 @@ Select an episode to manage or add new ones.
 
     keyboard.inline_keyboard.push(
       [{ text: '➕ Add Episode', callback_data: `add_episode_${seasonId}` }],
+      // A season is the highest level a token can target - there is deliberately
+      // no all-seasons token (spec §19).
+      [{ text: '🔑 Generate Season Token', callback_data: `generate_token_season_${seasonId}` }],
       [{ text: '🗑 Remove Season', callback_data: `delete_season_confirm_${seasonId}` }],
       [{ text: '🔙 Back', callback_data: `view_anime_${season.anime?.id || ''}` }]
     );

@@ -34,6 +34,8 @@ export async function handleAnimeCallback(callbackQuery) {
     await handleAniListSelect(chatId, messageId, userId, anilistId);
   } else if (data === 'admin_list_anime') {
     await handleListAnime(chatId, messageId);
+  } else if (data === 'admin_delete_anime') {
+    await handleListAnime(chatId, messageId, 'delete');
   } else if (data.startsWith('view_anime_')) {
     const animeId = data.replace('view_anime_', '');
     await handleViewAnime(chatId, messageId, animeId, userId);
@@ -284,9 +286,14 @@ async function handleDeleteAnime(chatId, messageId, animeId) {
 }
 
 /**
- * Handle list anime action
+ * Handle list anime action.
+ *
+ * @param {number} chatId - Telegram chat ID
+ * @param {number} messageId - Message ID to edit
+ * @param {'manage'|'delete'} [mode] - Which entry point opened the list. In
+ *   'delete' mode each row jumps straight to its delete confirmation.
  */
-async function handleListAnime(chatId, messageId) {
+async function handleListAnime(chatId, messageId, mode = 'manage') {
   try {
     const { data: animeList, error } = await supabase
       .from('anime')
@@ -302,12 +309,20 @@ async function handleListAnime(chatId, messageId) {
       return;
     }
 
-    const text = '<b>Anime Library</b>\n\nSelect an anime to manage:';
+    const isDeleteMode = mode === 'delete';
 
-    // TODO: Import getAnimeListKeyboard
+    const text = isDeleteMode
+      ? '🗑 <b>Delete Anime</b>\n\nSelect an anime to delete:'
+      : '<b>Anime Library</b>\n\nSelect an anime to manage:';
+
     const keyboard = {
       inline_keyboard: animeList.map((anime) => [
-        { text: anime.title, callback_data: `view_anime_${anime.id}` }
+        {
+          text: anime.title,
+          callback_data: isDeleteMode
+            ? `delete_anime_confirm_${anime.id}`
+            : `view_anime_${anime.id}`
+        }
       ])
     };
     keyboard.inline_keyboard.push([{ text: '🔙 Back', callback_data: 'admin_menu' }]);

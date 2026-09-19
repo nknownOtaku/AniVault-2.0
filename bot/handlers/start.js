@@ -1,30 +1,46 @@
 import { sendMessage } from '../../lib/telegram.js';
 import { getAdminKeyboard } from '../keyboards/admin.js';
+import { clearAdminState } from '../../lib/session.js';
+import { handleTokenAccess } from './user.js';
 
 /**
- * Handle /start command
+ * Handle /start command.
+ *
+ * `/start`            -> admin menu (for the configured admin)
+ * `/start <token>`    -> token access, available to any Telegram user
+ *
+ * The token branch is checked first so that a non-admin holding a valid token
+ * is served instead of being rejected.
+ *
  * @param {object} message - Telegram message object
  */
 export async function handleStart(message) {
   const chatId = message.chat.id;
   const userId = message.from.id;
-  
-  // Check if admin
-  const adminId = process.env.TELEGRAM_ADMIN_ID;
-  if (String(userId) !== String(adminId)) {
-    await sendMessage(chatId, '⛔ Access denied. Only administrators can use this bot.');
-    return;
-  }
 
-  // Check for token argument (user access)
-  const args = message.text?.split(' ');
-  if (args && args.length > 1) {
-    const token = args[1];
+  const args = message.text?.trim().split(/\s+/) || [];
+  const token = args[1];
+
+  // Any user (admin or not) may open a token link.
+  if (token) {
     await handleTokenAccess(chatId, token);
     return;
   }
 
-  // Admin menu
+  // No token: only the configured admin sees the management menu.
+  const adminId = process.env.TELEGRAM_ADMIN_ID;
+  if (String(userId) !== String(adminId)) {
+    await sendMessage(
+      chatId,
+      '⛔ Access denied. Only administrators can use this bot.\n\nIf you were given an access token, use /start &lt;token&gt;.'
+    );
+    return;
+  }
+
+  // Returning the admin to the menu always resets any in-flight workflow so a
+  // half-finished upload cannot leak into a new action.
+  await clearAdminState(userId, chatId);
+
   const welcomeText = `
 <b>Welcome to AniVault Admin</b>
 
@@ -34,15 +50,4 @@ Choose an action:
   await sendMessage(chatId, welcomeText, {
     reply_markup: getAdminKeyboard()
   });
-}
-
-/**
- * Handle token-based access for users
- * @param {number} chatId - Chat ID
- * @param {string} token - Access token
- */
-async function handleTokenAccess(chatId, token) {
-  // TODO: Implement token validation and user access
-  // For now, just acknowledge
-  await sendMessage(chatId, `🎫 Token received: ${token}\n\nUser access features coming soon.`);
 }
