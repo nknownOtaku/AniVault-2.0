@@ -36,7 +36,18 @@ export async function handleAnimeCallback(callbackQuery) {
     await handleListAnime(chatId, messageId);
   } else if (data.startsWith('view_anime_')) {
     const animeId = data.replace('view_anime_', '');
-    await handleViewAnime(chatId, messageId, animeId);
+    await handleViewAnime(chatId, messageId, animeId, userId);
+  } else if (data === 'back_to_anime') {
+    await handleListAnime(chatId, messageId);
+  } else if (data.startsWith('delete_anime_confirm_')) {
+    const animeId = data.replace('delete_anime_confirm_', '');
+    await handleDeleteAnimeConfirm(chatId, messageId, animeId);
+  } else if (data.startsWith('delete_anime_')) {
+    const animeId = data.replace('delete_anime_', '');
+    await handleDeleteAnime(chatId, messageId, animeId);
+  } else if (data.startsWith('cancel_delete_anime_')) {
+    const animeId = data.replace('cancel_delete_anime_', '');
+    await handleViewAnime(chatId, messageId, animeId, userId);
   }
 
   await answerCallbackQuery(callbackQuery.id);
@@ -207,6 +218,72 @@ async function upsertAnimeRecord(anime) {
 }
 
 /**
+ * Handle delete anime confirmation
+ */
+async function handleDeleteAnimeConfirm(chatId, messageId, animeId) {
+  try {
+    const { data: anime } = await supabase
+      .from('anime')
+      .select('id, title, seasons(id)')
+      .eq('id', animeId)
+      .maybeSingle();
+
+    if (!anime) {
+      await editMessageText(chatId, messageId, '❌ Anime not found.');
+      return;
+    }
+
+    const text = `
+⚠️ <b>DELETE ANIME</b>
+
+${anime.title}
+
+This will remove the anime and all its seasons,
+episodes and files.
+
+Are you sure?
+`;
+
+    const keyboard = {
+      inline_keyboard: [
+        [
+          { text: '⚠️ DELETE', callback_data: `delete_anime_${animeId}` },
+          { text: 'Cancel', callback_data: `cancel_delete_anime_${animeId}` }
+        ]
+      ]
+    };
+
+    await editMessageText(chatId, messageId, text, {
+      reply_markup: keyboard
+    });
+  } catch (error) {
+    console.error('Error confirming anime delete:', error);
+    await editMessageText(chatId, messageId, '❌ Error preparing delete confirmation.');
+  }
+}
+
+/**
+ * Handle actual anime deletion (cascades to seasons/episodes/files via schema)
+ */
+async function handleDeleteAnime(chatId, messageId, animeId) {
+  try {
+    const { error } = await supabase
+      .from('anime')
+      .delete()
+      .eq('id', animeId);
+
+    if (error) {
+      throw error;
+    }
+
+    await editMessageText(chatId, messageId, '✅ Anime deleted successfully.');
+  } catch (error) {
+    console.error('Error deleting anime:', error);
+    await editMessageText(chatId, messageId, '❌ Error deleting anime.');
+  }
+}
+
+/**
  * Handle list anime action
  */
 async function handleListAnime(chatId, messageId) {
@@ -247,17 +324,22 @@ async function handleListAnime(chatId, messageId) {
 /**
  * Handle view anime details
  */
-async function handleViewAnime(chatId, messageId, animeId) {
+async function handleViewAnime(chatId, messageId, animeId, userId) {
   try {
     const { data: anime, error } = await supabase
       .from('anime')
       .select('*, seasons(*)')
       .eq('id', animeId)
-      .single();
+      .maybeSingle();
 
     if (error || !anime) {
       await editMessageText(chatId, messageId, '❌ Anime not found.');
       return;
+    }
+
+    // Persist the anime so the season view can navigate back to it.
+    if (userId) {
+      await setAdminState(userId, chatId, BotState.VIEWING_ANIME, { anime_id: animeId });
     }
 
     const seasonCount = anime.seasons?.length || 0;

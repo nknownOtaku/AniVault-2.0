@@ -1,7 +1,7 @@
 import { sendMessage, editMessageText, answerCallbackQuery } from '../../lib/telegram.js';
 import { supabase } from '../../lib/supabase.js';
 import { generateId } from '../../lib/tokens.js';
-import { setAdminState, BotState } from '../../lib/session.js';
+import { setAdminState, getAdminState, BotState } from '../../lib/session.js';
 
 /**
  * Handle season-related callbacks
@@ -9,7 +9,7 @@ import { setAdminState, BotState } from '../../lib/session.js';
  */
 export async function handleSeasonCallback(callbackQuery) {
   const chatId = callbackQuery.message.chat.id;
-  const messageId = callbackQuery.message.message_id;
+  const messageId = callbackQuery.message_id;
   const data = callbackQuery.data;
   const userId = callbackQuery.from.id;
 
@@ -34,7 +34,12 @@ export async function handleSeasonCallback(callbackQuery) {
     await handleAddEpisode(chatId, messageId, userId, seasonId);
   } else if (data.startsWith('view_season_')) {
     const seasonId = data.replace('view_season_', '');
-    await handleViewSeason(chatId, messageId, seasonId);
+    await handleViewSeason(chatId, messageId, seasonId, userId);
+  } else if (data === 'back_to_seasons') {
+    await handleBackToSeasons(chatId, messageId, userId);
+  } else if (data.startsWith('cancel_delete_season_')) {
+    const seasonId = data.replace('cancel_delete_season_', '');
+    await handleViewSeason(chatId, messageId, seasonId, userId);
   } else if (data.startsWith('delete_season_confirm_')) {
     const seasonId = data.replace('delete_season_confirm_', '');
     await handleDeleteSeasonConfirm(chatId, messageId, seasonId);
@@ -105,7 +110,7 @@ Example:
 /**
  * Handle view season details
  */
-async function handleViewSeason(chatId, messageId, seasonId) {
+async function handleViewSeason(chatId, messageId, seasonId, userId) {
   try {
     const { data: season, error } = await supabase
       .from('seasons')
@@ -118,11 +123,19 @@ async function handleViewSeason(chatId, messageId, seasonId) {
         episodes (*)
       `)
       .eq('id', seasonId)
-      .single();
+      .maybeSingle();
 
     if (error || !season) {
       await editMessageText(chatId, messageId, '❌ Season not found.');
       return;
+    }
+
+    // Persist the current season so child views (episodes) can navigate back.
+    if (userId) {
+      await setAdminState(userId, chatId, BotState.VIEWING_SEASON, {
+        season_id: seasonId,
+        anime_id: season.anime?.id || null
+      });
     }
 
     const episodeCount = season.episodes?.length || 0;
@@ -141,21 +154,24 @@ Select an episode to manage or add new ones.
       inline_keyboard: []
     };
 
-    if (season.episodes) {
-      season.episodes.forEach((episode) => {
-        keyboard.inline_keyboard.push([
-          {
-            text: `Episode ${episode.episode_number}`,
-            callback_data: `view_episode_${episode.id}`
-          }
-        ]);
-      });
-    }
+    // Sort episodes by number so the list reads naturally.
+    const episodes = (season.episodes || [])
+      .slice()
+      .sort((a, b) => a.episode_number - b.episode_number);
+
+    episodes.forEach((episode) => {
+      keyboard.inline_keyboard.push([
+        {
+          text: `Episode ${episode.episode_number}`,
+          callback_data: `view_episode_${episode.id}`
+        }
+      ]);
+    });
 
     keyboard.inline_keyboard.push(
       [{ text: '➕ Add Episode', callback_data: `add_episode_${seasonId}` }],
       [{ text: '🗑 Remove Season', callback_data: `delete_season_confirm_${seasonId}` }],
-      [{ text: '🔙 Back', callback_data: 'back_to_seasons' }]
+      [{ text: '🔙 Back', callback_data: `view_anime_${season.anime?.id || ''}` }]
     );
 
     await editMessageText(chatId, messageId, text, {
@@ -165,6 +181,32 @@ Select an episode to manage or add new ones.
     console.error('Error viewing season:', error);
     await editMessageText(chatId, messageId, '❌ Error retrieving season details.');
   }
+}
+
+/**
+ * Return from a season view to the anime's season list.
+ * The anime is resolved from the admin session persisted while browsing.
+ *
+ * @param {number} chatId - Telegram chat ID
+ * @param {number} messageId - Message ID to edit
+ * @param {number} userId - Telegram user ID
+ */
+async function handleBackToSeasons(chatId, messageId, userId) {
+  const session = await getAdminState(userId);
+  const animeId = session?.data?.anime_id;
+
+  if (!animeId) {
+    await editMessageText(chatId, messageId, '❌ Anime context expired. Please open the anime again from /start.');
+    return;
+  }
+
+  const { handleAnimeCallback } = await import('./anime.js');
+  await handleAnimeCallback({
+    message: { chat: { id: chatId }, message_id: messageId },
+    data: `view_anime_${animeId}`,
+    from: { id: userId },
+    id: `back_${Date.now()}`
+  });
 }
 
 /**

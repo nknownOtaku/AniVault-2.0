@@ -1,7 +1,7 @@
 import { handleStart } from './handlers/start.js';
 import { handleAnimeCallback, handleAnimeMessage } from './handlers/anime.js';
 import { handleSeasonCallback, handleSeasonNameInput } from './handlers/season.js';
-import { handleFileUpload, handleUploadDone, handleConfirmUpload, handleCancelUpload, handleViewEpisode } from './handlers/upload.js';
+import { handleFileUpload, handleUploadDone, handleConfirmUpload, handleCancelUpload, handleViewEpisode, handleGenerateToken } from './handlers/upload.js';
 import { sendMessage, answerCallbackQuery } from '../lib/telegram.js';
 import { getAdminState, setAdminState, BotState } from '../lib/session.js';
 
@@ -61,11 +61,11 @@ export async function routeMessage(message) {
       case BotState.WAITING_ANIME_TITLE:
         await handleAnimeMessage(message, currentState);
         break;
-      
+
       case BotState.WAITING_SEASON_NAME:
         await handleSeasonNameInput(message, session.data?.anime_id);
         break;
-      
+
       default:
         // Unknown command in IDLE state
         await sendMessage(chatId, 'Please use /start to begin or select an option from the menu.');
@@ -103,12 +103,14 @@ export async function routeCallback(callbackQuery) {
   const session = await getAdminSession(userId);
 
   // Route based on callback data prefix
-  if (data.startsWith('admin_') || data.startsWith('anilist_') || data.startsWith('view_anime_') || data.startsWith('back_to_anime')) {
+  if (data.startsWith('admin_') || data.startsWith('anilist_') || data.startsWith('view_anime_') || data.startsWith('back_to_anime') || data.startsWith('delete_anime_') || data.startsWith('cancel_delete_anime_')) {
     await handleAnimeCallback(callbackQuery);
   } else if (data.startsWith('add_season_') || data.startsWith('view_season_') || data.startsWith('delete_season') || data.startsWith('add_episode_') || data.startsWith('back_to_seasons')) {
     await handleSeasonCallback(callbackQuery);
   } else if (data.startsWith('view_episode_') || data.startsWith('back_to_episodes')) {
     await handleViewEpisode(callbackQuery, data.replace('view_episode_', ''));
+  } else if (data.startsWith('generate_token_')) {
+    await handleGenerateToken(callbackQuery);
   } else if (data === 'upload_done') {
     await handleUploadDone(callbackQuery, session.data?.upload_session_id);
   } else if (data === 'confirm_upload') {

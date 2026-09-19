@@ -2,6 +2,7 @@ import { sendMessage, editMessageText, answerCallbackQuery } from '../../lib/tel
 import { supabase } from '../../lib/supabase.js';
 import { generateId, generateToken } from '../../lib/tokens.js';
 import { parseFilename } from '../../lib/parser.js';
+import { getAdminState } from '../../lib/session.js';
 
 /**
  * Handle file upload and episode management
@@ -94,7 +95,7 @@ Parsed:
  */
 export async function handleUploadDone(callbackQuery, uploadSessionId) {
   const chatId = callbackQuery.message.chat.id;
-  const messageId = callbackQuery.message.message_id;
+  const messageId = callbackQuery.message_id;
 
   try {
     // Get all uploaded files for this session
@@ -124,9 +125,9 @@ export async function handleUploadDone(callbackQuery, uploadSessionId) {
 
     // Build review text
     let reviewText = `
-━━━━━━━━━━━━━━━━━━━━
+━━
 <b>UPLOAD REVIEW</b>
-━━━━━━━━━━━━━━━━━━━━
+━━
 
 Files: ${uploadFiles.length}
 Episodes: ${episodesMap.size}
@@ -143,7 +144,7 @@ Episodes: ${episodesMap.size}
     });
 
     reviewText += `
-━━━━━━━━━━━━━━━━━━━━
+━━
 
 [✅ Confirm] [✏️ Edit] [❌ Cancel]
 `;
@@ -174,7 +175,7 @@ Episodes: ${episodesMap.size}
  */
 export async function handleConfirmUpload(callbackQuery, uploadSessionId, seasonId) {
   const chatId = callbackQuery.message.chat.id;
-  const messageId = callbackQuery.message.message_id;
+  const messageId = callbackQuery.message_id;
 
   try {
     // Get pending upload files
@@ -209,32 +210,38 @@ export async function handleConfirmUpload(callbackQuery, uploadSessionId, season
     for (const [epNum, files] of episodesMap) {
       totalEpisodes++;
 
-      // Create or get episode
-      const episodeId = generateId('EPI');
+      // Resolve the real episode row. An episode for (season, number) may
+      // already exist, so always look it up first; only generate a new id and
+      // insert when there is genuinely no row. Using a freshly generated id
+      // here without persisting it would orphan every file we attach below.
+      let episodeId;
 
-      const { data: episode } = await supabase
+      const { data: existingEpisode } = await supabase
         .from('episodes')
-        .insert({
-          id: episodeId,
-          season_id: seasonId,
-          episode_number: epNum,
-          title: `Episode ${epNum}`
-        })
-        .select()
-        .single();
+        .select('id')
+        .eq('season_id', seasonId)
+        .eq('episode_number', epNum)
+        .maybeSingle();
 
-      if (!episode) {
-        // Episode might already exist, fetch it
-        const { data: existingEpisode } = await supabase
+      if (existingEpisode) {
+        episodeId = existingEpisode.id;
+      } else {
+        episodeId = generateId('EPI');
+
+        const { data: episode, error: insertError } = await supabase
           .from('episodes')
-          .select('id')
-          .eq('season_id', seasonId)
-          .eq('episode_number', epNum)
+          .insert({
+            id: episodeId,
+            season_id: seasonId,
+            episode_number: epNum,
+            title: `Episode ${epNum}`
+          })
+          .select()
           .single();
 
-        if (existingEpisode) {
-          // Handle duplicate episode
-          // TODO: Implement duplicate handling logic
+        if (insertError || !episode) {
+          console.error('Failed to create episode:', epNum, insertError);
+          continue;
         }
       }
 
@@ -252,7 +259,7 @@ export async function handleConfirmUpload(callbackQuery, uploadSessionId, season
           .eq('quality', parsed.quality)
           .eq('language_type', parsed.languageType)
           .eq('language', parsed.language)
-          .single();
+          .maybeSingle();
 
         if (existingFile) {
           // Duplicate detected
@@ -261,7 +268,7 @@ export async function handleConfirmUpload(callbackQuery, uploadSessionId, season
         }
 
         // Insert file record
-        await supabase
+        const { error: fileError } = await supabase
           .from('files')
           .insert({
             id: fileId,
@@ -277,6 +284,11 @@ export async function handleConfirmUpload(callbackQuery, uploadSessionId, season
             telegram_file_id: file.telegram_file_id,
             telegram_chat_id: process.env.TELEGRAM_ADMIN_ID
           });
+
+        if (fileError) {
+          console.error('Failed to insert file:', file.filename, fileError);
+          continue;
+        }
 
         // Update upload file status
         await supabase
@@ -318,7 +330,7 @@ Season Token: <code>${seasonToken}</code>
  */
 export async function handleCancelUpload(callbackQuery, uploadSessionId) {
   const chatId = callbackQuery.message.chat.id;
-  const messageId = callbackQuery.message.message_id;
+  const messageId = callbackQuery.message_id;
 
   try {
     // Delete pending upload files
@@ -339,14 +351,23 @@ export async function handleCancelUpload(callbackQuery, uploadSessionId) {
 /**
  * Handle view episode details
  * @param {object} callbackQuery - Telegram callback query
- * @param {string} episodeId - Episode ID
+ * @param {string} episodeId - Episode ID (or 'back_to_episodes' from the Back button)
  */
 export async function handleViewEpisode(callbackQuery, episodeId) {
   const chatId = callbackQuery.message.chat.id;
-  const messageId = callbackQuery.message.message_id;
+  const messageId = callbackQuery.message_id;
+
+  // The Back button routes here too but carries no episode id, so return to the
+  // parent season view instead of attempting a lookup.
+  if (!episodeId || episodeId === 'back_to_episodes') {
+    await handleBackToEpisodes(callbackQuery);
+    return;
+  }
 
   try {
-    const { data: episode } = await supabase
+    // maybeSingle() returns null on zero rows instead of erroring, so a missing
+    // episode produces a clean "not found" rather than a thrown exception.
+    const { data: episode, error } = await supabase
       .from('episodes')
       .select(`
         *,
@@ -361,7 +382,13 @@ export async function handleViewEpisode(callbackQuery, episodeId) {
         files (*)
       `)
       .eq('id', episodeId)
-      .single();
+      .maybeSingle();
+
+    if (error) {
+      console.error('Error fetching episode:', episodeId, error);
+      await editMessageText(chatId, messageId, '❌ Error retrieving episode details.');
+      return;
+    }
 
     if (!episode) {
       await editMessageText(chatId, messageId, '❌ Episode not found.');
@@ -370,32 +397,40 @@ export async function handleViewEpisode(callbackQuery, episodeId) {
 
     const animeTitle = episode.season?.anime?.title || 'Unknown';
     const seasonName = episode.season?.name || 'Unknown';
-    const fileCount = episode.files?.length || 0;
+    const files = episode.files || [];
 
     let filesText = '';
-    if (episode.files) {
-      episode.files.forEach((file) => {
-        filesText += `\n• ${file.quality} ${file.language_type.toUpperCase()} (${file.language})`;
-      });
-    }
+    files.forEach((file) => {
+      filesText += `\n• ${file.quality} ${file.language_type.toUpperCase()} (${file.language})\n  ID: <code>${file.id}</code>`;
+    });
 
     const text = `
 <b>${animeTitle}</b>
 ${seasonName}
 <b>Episode ${episode.episode_number}</b>
 
-Files: ${fileCount}${filesText}
+Files: ${files.length}${filesText}
 
-Select a file to download or generate access token.
+Use a file ID above to generate an access token or download.
 `;
 
-    const keyboard = {
-      inline_keyboard: [
-        [{ text: '🔑 Generate Token', callback_data: `generate_token_episode_${episodeId}` }],
-        [{ text: '🗑 Delete Episode', callback_data: `delete_episode_confirm_${episodeId}` }],
-        [{ text: '🔙 Back', callback_data: 'back_to_episodes' }]
-      ]
-    };
+    // One button per file (keyed by the file id), plus per-episode actions.
+    const keyboard = { inline_keyboard: [] };
+
+    files.forEach((file) => {
+      keyboard.inline_keyboard.push([
+        {
+          text: `🔑 ${file.quality} ${file.language_type.toUpperCase()} (${file.language})`,
+          callback_data: `generate_token_file_${file.id}`
+        }
+      ]);
+    });
+
+    keyboard.inline_keyboard.push(
+      [{ text: '🔑 Generate Episode Token', callback_data: `generate_token_episode_${episodeId}` }],
+      [{ text: '🗑 Delete Episode', callback_data: `delete_episode_confirm_${episodeId}` }],
+      [{ text: '🔙 Back', callback_data: `view_season_${episode.season?.id || ''}` }]
+    );
 
     await editMessageText(chatId, messageId, text, {
       reply_markup: keyboard
@@ -405,5 +440,131 @@ Select a file to download or generate access token.
   } catch (error) {
     console.error('Error viewing episode:', error);
     await editMessageText(chatId, messageId, '❌ Error retrieving episode details.');
+  }
+}
+
+/**
+ * Return from an episode view to its parent season view.
+ * The season is resolved from the admin session, which stores season_id while
+ * the season/episode lists are being browsed.
+ *
+ * @param {object} callbackQuery - Telegram callback query
+ */
+async function handleBackToEpisodes(callbackQuery) {
+  const chatId = callbackQuery.message.chat.id;
+  const messageId = callbackQuery.message_id;
+  const userId = callbackQuery.from.id;
+
+  const session = await getAdminState(userId);
+  const seasonId = session?.data?.season_id;
+
+  if (!seasonId) {
+    await editMessageText(chatId, messageId, '❌ Season context expired. Please open the season again from /start.');
+    await answerCallbackQuery(callbackQuery.id);
+    return;
+  }
+
+  // Delegate to the season handler so the exact same season view is reused.
+  const { handleSeasonCallback } = await import('./season.js');
+  await handleSeasonCallback({
+    ...callbackQuery,
+    data: `view_season_${seasonId}`
+  });
+}
+/**
+ * Generate an access token for an episode or a single file.
+ * Callback data shapes:
+ *   generate_token_episode_<episodeId>
+ *   generate_token_file_<fileId>
+ * The item id is everything after the type prefix, so ids containing
+ * underscores are preserved.
+ *
+ * @param {object} callbackQuery - Telegram callback query
+ */
+export async function handleGenerateToken(callbackQuery) {
+  const chatId = callbackQuery.message.chat.id;
+  const messageId = callbackQuery.message_id;
+  const data = callbackQuery.data || '';
+
+  try {
+    const token = generateToken(30);
+
+    if (data.startsWith('generate_token_episode_')) {
+      const episodeId = data.replace('generate_token_episode_', '');
+
+      const { data: episode } = await supabase
+        .from('episodes')
+        .select('id, episode_number')
+        .eq('id', episodeId)
+        .maybeSingle();
+
+      if (!episode) {
+        await editMessageText(chatId, messageId, '❌ Episode not found.');
+        await answerCallbackQuery(callbackQuery.id, 'Episode not found');
+        return;
+      }
+
+      const { error } = await supabase
+        .from('start_tokens')
+        .insert({
+          token,
+          token_type: 'episode',
+          episode_id: episodeId
+        });
+
+      if (error) {
+        throw error;
+      }
+
+      await editMessageText(chatId, messageId, `
+🔑 <b>Episode Token</b>
+
+Episode ${episode.episode_number}
+
+<code>${token}</code>
+`);
+    } else if (data.startsWith('generate_token_file_')) {
+      const fileId = data.replace('generate_token_file_', '');
+
+      const { data: file } = await supabase
+        .from('files')
+        .select('id, quality, language_type, language')
+        .eq('id', fileId)
+        .maybeSingle();
+
+      if (!file) {
+        await editMessageText(chatId, messageId, '❌ File not found.');
+        await answerCallbackQuery(callbackQuery.id, 'File not found');
+        return;
+      }
+
+      const { error } = await supabase
+        .from('start_tokens')
+        .insert({
+          token,
+          token_type: 'file',
+          file_id: fileId
+        });
+
+      if (error) {
+        throw error;
+      }
+
+      await editMessageText(chatId, messageId, `
+🔑 <b>File Token</b>
+
+${file.quality} ${file.language_type.toUpperCase()} (${file.language})
+
+<code>${token}</code>
+`);
+    } else {
+      await answerCallbackQuery(callbackQuery.id, 'Unknown token target');
+      return;
+    }
+
+    await answerCallbackQuery(callbackQuery.id);
+  } catch (error) {
+    console.error('Error generating token:', error);
+    await editMessageText(chatId, messageId, '❌ Error generating token.');
   }
 }
