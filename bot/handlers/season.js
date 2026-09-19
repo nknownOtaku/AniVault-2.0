@@ -20,13 +20,15 @@ export async function handleSeasonCallback(callbackQuery) {
     return;
   }
 
-  // Parse callback data
-  if (data.startsWith('add_season_')) {
-    const anilistId = data.replace('add_season_', '');
-    await handleAddSeason(chatId, messageId, userId, anilistId);
-  } else if (data.startsWith('add_season_db_')) {
+  // Parse callback data.
+  // NOTE: check 'add_season_db_' before 'add_season_' - the shorter prefix
+  // would otherwise swallow the longer one and corrupt the ID.
+  if (data.startsWith('add_season_db_')) {
     const animeId = data.replace('add_season_db_', '');
     await handleAddSeasonDb(chatId, messageId, userId, animeId);
+  } else if (data.startsWith('add_season_')) {
+    const animeId = data.replace('add_season_', '');
+    await handleAddSeason(chatId, messageId, userId, animeId);
   } else if (data.startsWith('view_season_')) {
     const seasonId = data.replace('view_season_', '');
     await handleViewSeason(chatId, messageId, seasonId);
