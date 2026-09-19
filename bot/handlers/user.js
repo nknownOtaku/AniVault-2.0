@@ -161,25 +161,21 @@ async function handleEpisodeToken(chatId, tokenRow) {
  * media itself is never downloaded onto this server — Telegram serves it.
  */
 async function handleFileToken(chatId, tokenRow) {
-  const { data: file } = await supabase
+  const { data: file, error: fileError } = await supabase
     .from('files')
-    .select(`
-      id,
-      quality,
-      language_type,
-      language,
-      filename,
-      telegram_file_id,
-      episodes (
-        episode_number,
-        season ( name, anime ( title ) )
-      )
-    `)
+    .select('id, episode_id, quality, language_type, language, filename, telegram_file_id')
     .eq('id', tokenRow.file_id)
     .maybeSingle();
 
+  if (fileError) {
+    console.error('Error fetching file for token:', tokenRow.id, fileError);
+    await sendMessage(chatId, '❌ The file record could not be loaded. Please ask the administrator to repair this token.');
+    return;
+  }
+
   if (!file) {
-    await sendMessage(chatId, '❌ File not found.');
+    console.warn('Token points to a missing file:', tokenRow.id, tokenRow.file_id);
+    await sendMessage(chatId, '❌ This file is no longer available. Please ask the administrator to generate a new token.');
     return;
   }
 
@@ -191,9 +187,45 @@ async function handleFileToken(chatId, tokenRow) {
     return;
   }
 
-  const animeTitle = file.episodes?.season?.anime?.title || 'Unknown';
-  const seasonName = file.episodes?.season?.name || 'Unknown';
-  const episodeNumber = file.episodes?.episode_number ?? '?';
+  const { data: episode, error: episodeError } = await supabase
+    .from('episodes')
+    .select('episode_number, season_id')
+    .eq('id', file.episode_id)
+    .maybeSingle();
+
+  if (episodeError) {
+    console.error('Error fetching episode for file token:', tokenRow.id, episodeError);
+    await sendMessage(chatId, '❌ The episode record could not be loaded.');
+    return;
+  }
+
+  const { data: season, error: seasonError } = await supabase
+    .from('seasons')
+    .select('name, anime_id')
+    .eq('id', episode?.season_id)
+    .maybeSingle();
+
+  if (seasonError) {
+    console.error('Error fetching season for file token:', tokenRow.id, seasonError);
+    await sendMessage(chatId, '❌ The season record could not be loaded.');
+    return;
+  }
+
+  const { data: anime, error: animeError } = await supabase
+    .from('anime')
+    .select('title')
+    .eq('id', season?.anime_id)
+    .maybeSingle();
+
+  if (animeError) {
+    console.error('Error fetching anime for file token:', tokenRow.id, animeError);
+    await sendMessage(chatId, '❌ The anime record could not be loaded.');
+    return;
+  }
+
+  const animeTitle = anime?.title || 'Unknown';
+  const seasonName = season?.name || 'Unknown';
+  const episodeNumber = episode?.episode_number ?? '?';
 
   const caption = [
     `<b>${animeTitle}</b>`,
