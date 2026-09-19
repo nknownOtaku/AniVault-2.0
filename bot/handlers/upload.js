@@ -450,9 +450,10 @@ async function commitUpload({ seasonId, uploadFiles, duplicateStrategy }) {
         continue;
       }
 
+      const newFileId = generateId('FIL');
       const { error: fileError } = await supabase
         .from('files')
-        .insert({ id: generateId('FIL'), episode_id: episodeId, ...filePayload });
+        .insert({ id: newFileId, episode_id: episodeId, ...filePayload });
 
       if (fileError) {
         console.error('Failed to insert file:', file.filename, fileError);
@@ -462,7 +463,7 @@ async function commitUpload({ seasonId, uploadFiles, duplicateStrategy }) {
 
       stats.filesSaved++;
       await markUploadFileProcessed(file.id);
-      await ensureFileToken(fileId);
+      await ensureFileToken(newFileId);
     }
   }
 
