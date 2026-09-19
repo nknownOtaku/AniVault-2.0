@@ -6,7 +6,9 @@ export function getAdminKeyboard() {
     inline_keyboard: [
       [{ text: '➕ Add Anime', callback_data: 'admin_add_anime' }],
       [{ text: '📚 List Anime', callback_data: 'admin_list_anime' }],
-      [{ text: '🗑 Delete Anime', callback_data: 'admin_delete_anime' }]
+      [{ text: '🗑 Delete Anime', callback_data: 'admin_delete_anime' }],
+      [{ text: '📊 Library Status', callback_data: 'admin_stats' }],
+      [{ text: '🧹 Clear Database', callback_data: 'admin_clear_database' }]
     ]
   };
 }

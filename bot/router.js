@@ -3,6 +3,8 @@ import { handleAnimeCallback, handleAnimeMessage } from './handlers/anime.js';
 import { handleSeasonCallback, handleSeasonNameInput } from './handlers/season.js';
 import { handleFileUpload, handleUploadDone, handleConfirmUpload, handleCancelUpload, handleViewEpisode, handleGenerateToken, handleDuplicateStrategy } from './handlers/upload.js';
 import { handleDeleteCallback } from './handlers/delete.js';
+import { handleAdminCallback, handleDatabaseClearConfirmation } from './handlers/admin.js';
+import { handleUserCallback, handleUserMessage } from './handlers/user-catalog.js';
 import { sendMessage, answerCallbackQuery } from '../lib/telegram.js';
 import { getAdminState, setAdminState, BotState } from '../lib/session.js';
 
@@ -54,7 +56,11 @@ export async function routeMessage(message) {
 
   // Every other message is an admin-only action.
   if (!isAdmin) {
-    await sendMessage(chatId, '⛔ Access denied. Only administrators can use this bot.');
+    if (message.text) {
+      await handleUserMessage(message);
+    } else {
+      await sendMessage(chatId, 'Please use the buttons in /start to browse AniVault.');
+    }
     return;
   }
 
@@ -71,6 +77,10 @@ export async function routeMessage(message) {
 
       case BotState.WAITING_SEASON_NAME:
         await handleSeasonNameInput(message, session.data?.anime_id);
+        break;
+
+      case BotState.WAITING_DATABASE_CLEAR_CONFIRM:
+        await handleDatabaseClearConfirmation(message);
         break;
 
       default:
@@ -99,6 +109,11 @@ export async function routeCallback(callbackQuery) {
   const userId = callbackQuery.from.id;
   const data = callbackQuery.data;
 
+  if (data?.startsWith('user_')) {
+    await handleUserCallback(callbackQuery);
+    return;
+  }
+
   // Verify admin
   const adminId = process.env.TELEGRAM_ADMIN_ID;
   if (String(userId) !== String(adminId)) {
@@ -114,7 +129,9 @@ export async function routeCallback(callbackQuery) {
   // Order matters: episode and file deletion prefixes (@see delete.js) must be
   // checked before the broader season/upload branches, otherwise a callback
   // such as `delete_episode_confirm_...` would fall into the wrong handler.
-  if (data.startsWith('delete_episode_') || data.startsWith('cancel_delete_episode_') || data.startsWith('delete_file_') || data.startsWith('cancel_delete_file_')) {
+  if (data === 'admin_stats' || data === 'admin_repair_tokens' || data === 'admin_cleanup_uploads' || data === 'admin_clear_database' || data === 'admin_clear_database_cancel') {
+    await handleAdminCallback(callbackQuery);
+  } else if (data.startsWith('delete_episode_') || data.startsWith('cancel_delete_episode_') || data.startsWith('delete_file_') || data.startsWith('cancel_delete_file_')) {
     await handleDeleteCallback(callbackQuery);
   } else if (data.startsWith('admin_') || data.startsWith('anilist_') || data.startsWith('view_anime_') || data.startsWith('back_to_anime') || data.startsWith('delete_anime_') || data.startsWith('cancel_delete_anime_')) {
     await handleAnimeCallback(callbackQuery);

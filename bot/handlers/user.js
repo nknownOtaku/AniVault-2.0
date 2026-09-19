@@ -1,5 +1,6 @@
 import { sendDocument, sendMessage } from '../../lib/telegram.js';
 import { supabase } from '../../lib/supabase.js';
+import { getUserBackKeyboard, getUserFileKeyboard, getUserEpisodeKeyboard } from '../keyboards/user.js';
 
 /**
  * User-facing token access.
@@ -98,13 +99,10 @@ async function handleSeasonToken(chatId, tokenRow) {
     return;
   }
 
-  const list = episodes
-    .map((ep) => `• Episode ${ep.episode_number}`)
-    .join('\n');
-
   await sendMessage(
     chatId,
-    `<b>${animeTitle}</b>\n${season.name}\n\n<b>Episodes:</b>\n${list}`
+    `<b>${animeTitle}</b>\n${season.name}\n\n<b>Episodes:</b>`,
+    { reply_markup: getUserEpisodeKeyboard(episodes) }
   );
 }
 
@@ -119,7 +117,7 @@ async function handleEpisodeToken(chatId, tokenRow) {
     .select(`
       id,
       episode_number,
-      season ( name, anime ( title ) ),
+      season ( id, name, anime ( title ) ),
       files ( id, quality, language_type, language )
     `)
     .eq('id', tokenRow.episode_id)
@@ -138,7 +136,9 @@ async function handleEpisodeToken(chatId, tokenRow) {
     `<b>${animeTitle}</b>\n${seasonName}\n<b>Episode ${episode.episode_number}</b>\n\n`;
 
   if (files.length === 0) {
-    await sendMessage(chatId, `${header}No files available yet.`);
+      await sendMessage(chatId, `${header}No files available yet.`, {
+        reply_markup: getUserBackKeyboard()
+      });
     return;
   }
 
@@ -149,7 +149,9 @@ async function handleEpisodeToken(chatId, tokenRow) {
     )
     .join('\n');
 
-  await sendMessage(chatId, `${header}<b>Available:</b>\n${available}`);
+  await sendMessage(chatId, `${header}<b>Available:</b>\n${available}`, {
+    reply_markup: getUserFileKeyboard(files, episode.id, episode.season?.id)
+  });
 }
 
 /**

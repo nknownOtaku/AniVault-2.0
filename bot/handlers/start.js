@@ -2,6 +2,7 @@ import { sendMessage } from '../../lib/telegram.js';
 import { getAdminKeyboard } from '../keyboards/admin.js';
 import { clearAdminState } from '../../lib/session.js';
 import { handleTokenAccess } from './user.js';
+import { handleUserHome } from './user-catalog.js';
 
 /**
  * Handle /start command.
@@ -30,10 +31,7 @@ export async function handleStart(message) {
   // No token: only the configured admin sees the management menu.
   const adminId = process.env.TELEGRAM_ADMIN_ID;
   if (String(userId) !== String(adminId)) {
-    await sendMessage(
-      chatId,
-      '⛔ Access denied. Only administrators can use this bot.\n\nIf you were given an access token, use /start &lt;token&gt;.'
-    );
+    await handleUserHome(message);
     return;
   }
 
