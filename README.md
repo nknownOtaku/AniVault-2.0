@@ -222,6 +222,20 @@ curl -L "https://YOUR_DOMAIN/api/download/30_CHARACTER_FILE_TOKEN" \
 
 The download route resolves the Telegram file reference server-side. Telegram IDs and bot secrets are never returned by catalog APIs.
 
+The browser flow is:
+
+```text
+download token
+  -> Supabase start_tokens
+  -> Supabase files.telegram_file_id
+  -> Telegram getFile
+  -> Telegram result.file_path
+  -> Telegram file download
+  -> browser response
+```
+
+Telegram's Bot API has file-size and serverless runtime limits. Large anime files should eventually be copied to object storage/CDN for browser delivery; Telegram `file_id` delivery remains the reliable path for bot downloads.
+
 ## API Errors
 
 Errors use this shape:

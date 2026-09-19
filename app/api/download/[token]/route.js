@@ -1,5 +1,5 @@
 import { supabase } from '../../../../lib/supabase.js';
-import { getDownloadUrl, getFile } from '../../../../lib/telegram.js';
+import { getDownloadUrl, getTelegramFilePath } from '../../../../lib/telegram.js';
 
 /**
  * Deliver one authorized file without exposing Telegram identifiers or the bot
@@ -48,11 +48,15 @@ export async function GET(request, { params }) {
       return Response.json({ ok: false, error: 'File is not available.' }, { status: 404 });
     }
 
-    const telegramFile = await getFile(file.telegram_file_id);
-    const filePath = telegramFile?.result?.file_path;
-
-    if (!filePath) {
-      return Response.json({ ok: false, error: 'File delivery is unavailable.' }, { status: 502 });
+    let filePath;
+    try {
+      filePath = await getTelegramFilePath(file.telegram_file_id);
+    } catch (error) {
+      console.error('[ERROR] Telegram getFile failed:', error.message);
+      return Response.json(
+        { ok: false, error: 'Telegram could not resolve this file. It may be expired or too large for browser delivery.' },
+        { status: 502 }
+      );
     }
 
     const headers = {};
