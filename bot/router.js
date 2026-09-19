@@ -76,7 +76,7 @@ export async function routeMessage(message) {
   // Handle file uploads
   if (message.document || message.video) {
     if (currentState === BotState.WAITING_FILES) {
-      await handleFileUpload(message, session.data?.season_id);
+      await handleFileUpload(message, session.data?.upload_session_id);
     } else {
       await sendMessage(chatId, '⚠️ Please start the upload process by adding a season first.');
     }
@@ -110,11 +110,11 @@ export async function routeCallback(callbackQuery) {
   } else if (data.startsWith('view_episode_')) {
     await handleViewEpisode(callbackQuery, data.replace('view_episode_', ''));
   } else if (data === 'upload_done') {
-    await handleUploadDone(callbackQuery, session.data?.season_id);
+    await handleUploadDone(callbackQuery, session.data?.upload_session_id);
   } else if (data === 'confirm_upload') {
-    await handleConfirmUpload(callbackQuery, session.data?.season_id);
+    await handleConfirmUpload(callbackQuery, session.data?.upload_session_id, session.data?.season_id);
   } else if (data === 'cancel_upload') {
-    await handleCancelUpload(callbackQuery, session.data?.season_id);
+    await handleCancelUpload(callbackQuery, session.data?.upload_session_id);
   } else if (data === 'edit_upload') {
     await answerCallbackQuery(callbackQuery.id, 'Edit functionality coming soon');
   } else if (data === 'admin_menu') {

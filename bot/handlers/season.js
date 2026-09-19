@@ -258,7 +258,7 @@ export async function handleSeasonNameInput(message, animeId) {
     // Create season
     const seasonId = generateId('SEA');
 
-    const { data: season, error } = await supabase
+    const { error } = await supabase
       .from('seasons')
       .insert({
         id: seasonId,
@@ -271,6 +271,23 @@ export async function handleSeasonNameInput(message, animeId) {
 
     if (error) {
       throw error;
+    }
+
+    // upload_files.upload_session_id references upload_sessions(id), so a
+    // session row must exist before any file upload can be recorded.
+    const uploadSessionId = generateId('UPL');
+    const { error: uploadSessionError } = await supabase
+      .from('upload_sessions')
+      .insert({
+        id: uploadSessionId,
+        telegram_user_id: String(userId),
+        anime_id: animeId,
+        season_id: seasonId,
+        status: 'pending'
+      });
+
+    if (uploadSessionError) {
+      throw uploadSessionError;
     }
 
     const text = `
@@ -292,8 +309,12 @@ You can send multiple files. When you are finished, click:
       reply_markup: keyboard
     });
 
-    // Move into the file-upload state, binding the new season to the session.
-    await setAdminState(userId, chatId, BotState.WAITING_FILES, { season_id: seasonId });
+    // Move into the file-upload state, binding the season + upload session.
+    await setAdminState(userId, chatId, BotState.WAITING_FILES, {
+      season_id: seasonId,
+      anime_id: animeId,
+      upload_session_id: uploadSessionId
+    });
   } catch (error) {
     console.error('Error creating season:', error);
     await sendMessage(chatId, '❌ Error creating season.');

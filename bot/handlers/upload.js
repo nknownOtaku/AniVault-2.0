@@ -10,14 +10,14 @@ import { parseFilename } from '../../lib/parser.js';
 /**
  * Handle uploaded document/video files
  * @param {object} message - Telegram message object
- * @param {string} seasonId - Current season ID from session
+ * @param {string} uploadSessionId - Current upload session ID from session
  */
-export async function handleFileUpload(message, seasonId) {
+export async function handleFileUpload(message, uploadSessionId) {
   const chatId = message.chat.id;
-  
+
   // Get file info from document or video
   const file = message.document || message.video;
-  
+
   if (!file) {
     await sendMessage(chatId, '❌ No file detected. Please send a valid document or video file.');
     return;
@@ -45,16 +45,20 @@ Please rename the file or choose manual entry.
     return;
   }
 
+  if (!uploadSessionId) {
+    await sendMessage(chatId, '❌ Upload session not found. Please add a season again from /start.');
+    return;
+  }
+
   // Store in temporary upload session
-  // TODO: Implement upload_sessions and upload_files tables
   try {
     const uploadFileId = generateId('UFL');
-    
+
     const { error } = await supabase
       .from('upload_files')
       .insert({
         id: uploadFileId,
-        upload_session_id: seasonId, // Using seasonId temporarily
+        upload_session_id: uploadSessionId,
         filename,
         telegram_file_id: fileId,
         file_size: fileSize,
@@ -86,9 +90,9 @@ Parsed:
 /**
  * Handle upload completion
  * @param {object} callbackQuery - Telegram callback query
- * @param {string} seasonId - Season ID
+ * @param {string} uploadSessionId - Upload session ID
  */
-export async function handleUploadDone(callbackQuery, seasonId) {
+export async function handleUploadDone(callbackQuery, uploadSessionId) {
   const chatId = callbackQuery.message.chat.id;
   const messageId = callbackQuery.message.message_id;
 
@@ -97,7 +101,7 @@ export async function handleUploadDone(callbackQuery, seasonId) {
     const { data: uploadFiles } = await supabase
       .from('upload_files')
       .select('*')
-      .eq('upload_session_id', seasonId)
+      .eq('upload_session_id', uploadSessionId)
       .eq('status', 'pending');
 
     if (!uploadFiles || uploadFiles.length === 0) {
@@ -107,11 +111,11 @@ export async function handleUploadDone(callbackQuery, seasonId) {
 
     // Group by episode
     const episodesMap = new Map();
-    
+
     uploadFiles.forEach((file) => {
       const parsed = file.parsed_data;
       const epNum = parsed.episode;
-      
+
       if (!episodesMap.has(epNum)) {
         episodesMap.set(epNum, []);
       }
@@ -168,7 +172,7 @@ Episodes: ${episodesMap.size}
  * @param {object} callbackQuery - Telegram callback query
  * @param {string} seasonId - Season ID
  */
-export async function handleConfirmUpload(callbackQuery, seasonId) {
+export async function handleConfirmUpload(callbackQuery, uploadSessionId, seasonId) {
   const chatId = callbackQuery.message.chat.id;
   const messageId = callbackQuery.message.message_id;
 
@@ -177,7 +181,7 @@ export async function handleConfirmUpload(callbackQuery, seasonId) {
     const { data: uploadFiles } = await supabase
       .from('upload_files')
       .select('*')
-      .eq('upload_session_id', seasonId)
+      .eq('upload_session_id', uploadSessionId)
       .eq('status', 'pending');
 
     if (!uploadFiles || uploadFiles.length === 0) {
@@ -187,11 +191,11 @@ export async function handleConfirmUpload(callbackQuery, seasonId) {
 
     // Group by episode
     const episodesMap = new Map();
-    
+
     uploadFiles.forEach((file) => {
       const parsed = file.parsed_data;
       const epNum = parsed.episode;
-      
+
       if (!episodesMap.has(epNum)) {
         episodesMap.set(epNum, []);
       }
@@ -204,10 +208,10 @@ export async function handleConfirmUpload(callbackQuery, seasonId) {
     // Process each episode
     for (const [epNum, files] of episodesMap) {
       totalEpisodes++;
-      
+
       // Create or get episode
       const episodeId = generateId('EPI');
-      
+
       const { data: episode } = await supabase
         .from('episodes')
         .insert({
@@ -227,7 +231,7 @@ export async function handleConfirmUpload(callbackQuery, seasonId) {
           .eq('season_id', seasonId)
           .eq('episode_number', epNum)
           .single();
-        
+
         if (existingEpisode) {
           // Handle duplicate episode
           // TODO: Implement duplicate handling logic
@@ -309,8 +313,10 @@ Season Token: <code>${seasonToken}</code>
 
 /**
  * Handle cancel upload
+ * @param {object} callbackQuery - Telegram callback query
+ * @param {string} uploadSessionId - Upload session ID
  */
-export async function handleCancelUpload(callbackQuery, seasonId) {
+export async function handleCancelUpload(callbackQuery, uploadSessionId) {
   const chatId = callbackQuery.message.chat.id;
   const messageId = callbackQuery.message.message_id;
 
@@ -319,7 +325,7 @@ export async function handleCancelUpload(callbackQuery, seasonId) {
     await supabase
       .from('upload_files')
       .delete()
-      .eq('upload_session_id', seasonId)
+      .eq('upload_session_id', uploadSessionId)
       .eq('status', 'pending');
 
     await editMessageText(chatId, messageId, '❌ Upload cancelled.');
