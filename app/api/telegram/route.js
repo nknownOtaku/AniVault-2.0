@@ -6,6 +6,11 @@ import { routeMessage, routeCallback } from '../../../bot/router.js';
  */
 export async function POST(request) {
   try {
+    const webhookSecret = process.env.TELEGRAM_WEBHOOK_SECRET;
+    if (webhookSecret && request.headers.get('x-telegram-bot-api-secret-token') !== webhookSecret) {
+      return Response.json({ ok: false, error: 'Unauthorized webhook request.' }, { status: 401 });
+    }
+
     const update = await request.json();
 
     // Log update type (for debugging, avoid logging sensitive data)

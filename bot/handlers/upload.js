@@ -29,6 +29,8 @@ export async function handleFileUpload(message, uploadSessionId) {
   const fileId = file.file_id;
   const fileSize = file.file_size;
   const mimeType = file.mime_type;
+  const telegramChatId = message.chat.id;
+  const telegramMessageId = message.message_id;
 
   // Parse filename
   const parsed = parseFilename(filename);
@@ -63,6 +65,8 @@ Please rename the file or choose manual entry.
         upload_session_id: uploadSessionId,
         filename,
         telegram_file_id: fileId,
+        telegram_chat_id: String(telegramChatId),
+        telegram_message_id: String(telegramMessageId),
         file_size: fileSize,
         mime_type: mimeType,
         parsed_data: parsed,
@@ -96,7 +100,7 @@ Parsed:
  */
 export async function handleUploadDone(callbackQuery, uploadSessionId) {
   const chatId = callbackQuery.message.chat.id;
-  const messageId = callbackQuery.message_id;
+  const messageId = callbackQuery.message.message_id;
   const userId = callbackQuery.from.id;
 
   try {
@@ -241,7 +245,7 @@ async function findDuplicates(uploadFiles, seasonId) {
  */
 export async function handleConfirmUpload(callbackQuery, uploadSessionId, seasonId, duplicateStrategy = 'ignore') {
   const chatId = callbackQuery.message.chat.id;
-  const messageId = callbackQuery.message_id;
+  const messageId = callbackQuery.message.message_id;
   const userId = callbackQuery.from.id;
 
   try {
@@ -409,7 +413,8 @@ async function commitUpload({ seasonId, uploadFiles, duplicateStrategy }) {
         mime_type: file.mime_type,
         file_size: file.file_size,
         telegram_file_id: file.telegram_file_id,
-        telegram_chat_id: process.env.TELEGRAM_ADMIN_ID
+        telegram_chat_id: file.telegram_chat_id,
+        telegram_message_id: file.telegram_message_id
       };
 
       // The duplicate key mirrors the DB UNIQUE constraint (spec §36) so this
@@ -436,6 +441,7 @@ async function commitUpload({ seasonId, uploadFiles, duplicateStrategy }) {
           }
 
           stats.duplicatesOverwritten++;
+          await ensureFileToken(existingFile.id);
         } else {
           stats.duplicatesSkipped++;
         }
@@ -456,10 +462,35 @@ async function commitUpload({ seasonId, uploadFiles, duplicateStrategy }) {
 
       stats.filesSaved++;
       await markUploadFileProcessed(file.id);
+      await ensureFileToken(fileId);
     }
   }
 
   return stats;
+}
+
+async function ensureFileToken(fileId) {
+  const { data: existing } = await supabase
+    .from('start_tokens')
+    .select('id')
+    .eq('token_type', 'file')
+    .eq('file_id', fileId)
+    .maybeSingle();
+
+  if (existing) {
+    return;
+  }
+
+  const { error } = await supabase.from('start_tokens').insert({
+    id: generateId('TOK'),
+    token: generateToken(30),
+    token_type: 'file',
+    file_id: fileId
+  });
+
+  if (error) {
+    console.warn('Could not create file token:', fileId, error.message);
+  }
 }
 
 /**
@@ -515,7 +546,7 @@ export async function handleDuplicateStrategy(callbackQuery, action) {
  */
 export async function handleCancelUpload(callbackQuery, uploadSessionId) {
   const chatId = callbackQuery.message.chat.id;
-  const messageId = callbackQuery.message_id;
+  const messageId = callbackQuery.message.message_id;
 
   try {
     // Delete pending upload files
@@ -540,7 +571,7 @@ export async function handleCancelUpload(callbackQuery, uploadSessionId) {
  */
 export async function handleViewEpisode(callbackQuery, episodeId) {
   const chatId = callbackQuery.message.chat.id;
-  const messageId = callbackQuery.message_id;
+  const messageId = callbackQuery.message.message_id;
 
   // The Back button routes here too but carries no episode id, so return to the
   // parent season view instead of attempting a lookup.
@@ -637,7 +668,7 @@ Use a file ID above to generate an access token or download.
  */
 async function handleBackToEpisodes(callbackQuery) {
   const chatId = callbackQuery.message.chat.id;
-  const messageId = callbackQuery.message_id;
+  const messageId = callbackQuery.message.message_id;
   const userId = callbackQuery.from.id;
 
   const session = await getAdminState(userId);
@@ -668,7 +699,7 @@ async function handleBackToEpisodes(callbackQuery) {
  */
 export async function handleGenerateToken(callbackQuery) {
   const chatId = callbackQuery.message.chat.id;
-  const messageId = callbackQuery.message_id;
+  const messageId = callbackQuery.message.message_id;
   const data = callbackQuery.data || '';
 
   try {

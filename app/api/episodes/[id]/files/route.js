@@ -52,10 +52,31 @@ export async function GET(request, { params }) {
       throw error;
     }
 
+    const fileIds = (files || []).map((file) => file.id);
+    const { data: tokens, error: tokenError } = fileIds.length
+      ? await supabase
+          .from('start_tokens')
+          .select('file_id, token')
+          .eq('token_type', 'file')
+          .in('file_id', fileIds)
+      : { data: [], error: null };
+
+    if (tokenError) {
+      throw tokenError;
+    }
+
+    const tokenByFileId = new Map((tokens || []).map((token) => [token.file_id, token.token]));
+    const publicFiles = (files || []).map((file) => ({
+      ...file,
+      downloadUrl: tokenByFileId.has(file.id)
+        ? `/api/download/${tokenByFileId.get(file.id)}`
+        : null
+    }));
+
     // Group by language type so the UI can render SUB and DUB sections.
     const grouped = { sub: [], dub: [] };
 
-    for (const file of files || []) {
+    for (const file of publicFiles) {
       const bucket = file.language_type === 'dub' ? grouped.dub : grouped.sub;
       bucket.push(file);
     }
@@ -69,7 +90,7 @@ export async function GET(request, { params }) {
         description: episode.description
       },
       season: episode.season || null,
-      files: files || [],
+      files: publicFiles,
       grouped
     });
   } catch (error) {

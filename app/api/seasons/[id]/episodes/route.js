@@ -55,6 +55,23 @@ export async function GET(request, { params }) {
       throw error;
     }
 
+    const fileIds = (episodes || []).flatMap((episode) =>
+      (episode.files || []).map((file) => file.id)
+    );
+    const { data: tokens, error: tokenError } = fileIds.length
+      ? await supabase
+          .from('start_tokens')
+          .select('file_id, token')
+          .eq('token_type', 'file')
+          .in('file_id', fileIds)
+      : { data: [], error: null };
+
+    if (tokenError) {
+      throw tokenError;
+    }
+
+    const tokenByFileId = new Map((tokens || []).map((token) => [token.file_id, token.token]));
+
     // Never leak storage references (telegram_file_id etc.) to the client. The
     // download layer resolves those server-side from the file id.
     const sanitized = (episodes || []).map((episode) => ({
@@ -66,7 +83,10 @@ export async function GET(request, { params }) {
         language_type: file.language_type,
         language: file.language,
         filename: file.filename,
-        file_size: file.file_size
+        file_size: file.file_size,
+        downloadUrl: tokenByFileId.has(file.id)
+          ? `/api/download/${tokenByFileId.get(file.id)}`
+          : null
       }))
     }));
 

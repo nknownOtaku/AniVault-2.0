@@ -72,7 +72,7 @@ export async function handleDeleteCallback(callbackQuery) {
  */
 async function confirmDeleteEpisode(callbackQuery, episodeId) {
   const chatId = callbackQuery.message.chat.id;
-  const messageId = callbackQuery.message_id;
+  const messageId = callbackQuery.message.message_id;
 
   try {
     const { data: episode, error } = await supabase
@@ -143,7 +143,7 @@ async function cancelDeleteEpisode(callbackQuery, episodeId) {
  */
 async function performDeleteEpisode(callbackQuery, episodeId) {
   const chatId = callbackQuery.message.chat.id;
-  const messageId = callbackQuery.message_id;
+  const messageId = callbackQuery.message.message_id;
 
   try {
     // Collect the Telegram message references before the rows disappear, since
@@ -191,7 +191,7 @@ async function performDeleteEpisode(callbackQuery, episodeId) {
  */
 async function confirmDeleteFile(callbackQuery, fileId) {
   const chatId = callbackQuery.message.chat.id;
-  const messageId = callbackQuery.message_id;
+  const messageId = callbackQuery.message.message_id;
 
   try {
     const { data: file, error } = await supabase
@@ -253,7 +253,7 @@ async function cancelDeleteFile(callbackQuery, fileId) {
     .maybeSingle();
 
   if (!file?.episode_id) {
-    await editMessageText(callbackQuery.message.chat.id, callbackQuery.message_id, '❌ File not found.');
+    await editMessageText(callbackQuery.message.chat.id, callbackQuery.message.message_id, '❌ File not found.');
     return;
   }
 
@@ -269,7 +269,7 @@ async function cancelDeleteFile(callbackQuery, fileId) {
  */
 async function performDeleteFile(callbackQuery, fileId) {
   const chatId = callbackQuery.message.chat.id;
-  const messageId = callbackQuery.message_id;
+  const messageId = callbackQuery.message.message_id;
 
   try {
     const { data: file } = await supabase

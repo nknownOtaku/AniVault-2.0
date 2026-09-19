@@ -96,3 +96,17 @@ test('setAdminState recovers from a unique-violation race', () => {
     'a concurrent insert must be recovered from instead of failing the user action'
   );
 });
+
+test('season callbacks use the Telegram message payload for edits', () => {
+  const seasonSource = readFileSync(join(__dirname, '..', 'bot', 'handlers', 'season.js'), 'utf8');
+  assert.match(
+    seasonSource,
+    /const messageId = callbackQuery\.message\.message_id;/,
+    'season button handlers must read message_id from callbackQuery.message'
+  );
+  assert.doesNotMatch(
+    seasonSource,
+    /const messageId = callbackQuery\.message_id;/,
+    'season handlers must not read message_id from the callback root'
+  );
+});

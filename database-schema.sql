@@ -99,11 +99,23 @@ CREATE TABLE IF NOT EXISTS start_tokens (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     used_at TIMESTAMP WITH TIME ZONE,
     -- Ensure only appropriate references are set based on token_type
+    CHECK (token ~ '^[A-Za-z0-9]{30}$'),
     CHECK (
-        (token_type = 'season' AND season_id IS NOT NULL) OR
-        (token_type = 'episode' AND episode_id IS NOT NULL) OR
-        (token_type = 'file' AND file_id IS NOT NULL)
+        (token_type = 'season' AND season_id IS NOT NULL AND episode_id IS NULL AND file_id IS NULL) OR
+        (token_type = 'episode' AND season_id IS NULL AND episode_id IS NOT NULL AND file_id IS NULL) OR
+        (token_type = 'file' AND season_id IS NULL AND episode_id IS NULL AND file_id IS NOT NULL)
     )
+);
+
+-- Keep older databases aligned with the token rules above.
+ALTER TABLE start_tokens DROP CONSTRAINT IF EXISTS start_tokens_token_format_check;
+ALTER TABLE start_tokens ADD CONSTRAINT start_tokens_token_format_check
+    CHECK (token ~ '^[A-Za-z0-9]{30}$');
+ALTER TABLE start_tokens DROP CONSTRAINT IF EXISTS start_tokens_reference_check;
+ALTER TABLE start_tokens ADD CONSTRAINT start_tokens_reference_check CHECK (
+    (token_type = 'season' AND season_id IS NOT NULL AND episode_id IS NULL AND file_id IS NULL) OR
+    (token_type = 'episode' AND season_id IS NULL AND episode_id IS NOT NULL AND file_id IS NULL) OR
+    (token_type = 'file' AND season_id IS NULL AND episode_id IS NULL AND file_id IS NOT NULL)
 );
 
 -- ============================================
@@ -178,12 +190,17 @@ CREATE TABLE IF NOT EXISTS upload_files (
     upload_session_id TEXT NOT NULL REFERENCES upload_sessions(id) ON DELETE CASCADE,
     filename TEXT NOT NULL,
     telegram_file_id TEXT,
+    telegram_chat_id TEXT,
+    telegram_message_id TEXT,
     file_size BIGINT,
     mime_type TEXT,
     parsed_data JSONB,
     status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'processed', 'failed')),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+ALTER TABLE upload_files ADD COLUMN IF NOT EXISTS telegram_chat_id TEXT;
+ALTER TABLE upload_files ADD COLUMN IF NOT EXISTS telegram_message_id TEXT;
 
 -- ============================================
 -- INDEXES

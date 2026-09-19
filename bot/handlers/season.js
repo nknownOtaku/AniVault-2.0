@@ -9,7 +9,7 @@ import { setAdminState, getAdminState, BotState } from '../../lib/session.js';
  */
 export async function handleSeasonCallback(callbackQuery) {
   const chatId = callbackQuery.message.chat.id;
-  const messageId = callbackQuery.message_id;
+  const messageId = callbackQuery.message.message_id;
   const data = callbackQuery.data;
   const userId = callbackQuery.from.id;
 
@@ -416,6 +416,14 @@ export async function handleSeasonNameInput(message, animeId) {
   }
 
   try {
+    const { data: latestSeason } = await supabase
+      .from('seasons')
+      .select('season_number')
+      .eq('anime_id', animeId)
+      .order('season_number', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
     // Create season
     const seasonId = generateId('SEA');
 
@@ -425,7 +433,7 @@ export async function handleSeasonNameInput(message, animeId) {
         id: seasonId,
         anime_id: animeId,
         name: seasonName,
-        season_number: 1 // TODO: Auto-increment based on existing seasons
+        season_number: (latestSeason?.season_number || 0) + 1
       })
       .select()
       .single();
