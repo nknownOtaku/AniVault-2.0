@@ -88,9 +88,35 @@ async function renderBrowse(chatId, messageId) {
 }
 
 async function renderLatest(chatId, messageId) {
-  const { data: episodes, error } = await supabase.from('episodes').select('id, episode_number, season(id, name, anime(id, title))').order('created_at', { ascending: false }).limit(20);
+  const { data: episodes, error } = await supabase
+    .from('episodes')
+    .select('id, season_id, episode_number, created_at')
+    .order('created_at', { ascending: false })
+    .limit(20);
+
   if (error) throw error;
-  const keyboard = { inline_keyboard: (episodes || []).map((episode) => [{ text: `${episode.season?.anime?.title || 'Anime'} · EP ${episode.episode_number}`, callback_data: `user_episode_${episode.id}` }]).concat([[{ text: '🏠 Home', callback_data: 'user_home' }]]) };
+
+  const seasonIds = [...new Set((episodes || []).map((episode) => episode.season_id))];
+  const { data: seasons, error: seasonsError } = seasonIds.length
+    ? await supabase.from('seasons').select('id, anime_id').in('id', seasonIds)
+    : { data: [], error: null };
+
+  if (seasonsError) throw seasonsError;
+
+  const animeIds = [...new Set((seasons || []).map((season) => season.anime_id))];
+  const { data: anime, error: animeError } = animeIds.length
+    ? await supabase.from('anime').select('id, title').in('id', animeIds)
+    : { data: [], error: null };
+
+  if (animeError) throw animeError;
+
+  const seasonById = new Map((seasons || []).map((season) => [season.id, season]));
+  const animeById = new Map((anime || []).map((entry) => [entry.id, entry]));
+  const keyboard = { inline_keyboard: (episodes || []).map((episode) => {
+    const season = seasonById.get(episode.season_id);
+    const entry = animeById.get(season?.anime_id);
+    return [{ text: `${entry?.title || 'Anime'} · EP ${episode.episode_number}`, callback_data: `user_episode_${episode.id}` }];
+  }).concat([[{ text: '🏠 Home', callback_data: 'user_home' }]]) };
   await editMessageText(chatId, messageId, '<b>Latest Episodes</b>\n\nChoose an episode:', { reply_markup: keyboard });
 }
 
@@ -155,10 +181,40 @@ async function renderEpisodeNavigation(chatId, messageId, episodeId) {
 }
 
 async function deliverFile(chatId, userId, fileId) {
-  const { data: file, error } = await supabase.from('files').select('id, filename, telegram_file_id, quality, language_type, language, episodes(episode_number, season(name, anime(title)))').eq('id', fileId).maybeSingle();
-  if (error) throw error;
+  const { data: file, error: fileError } = await supabase
+    .from('files')
+    .select('id, episode_id, filename, telegram_file_id, quality, language_type, language')
+    .eq('id', fileId)
+    .maybeSingle();
+
+  if (fileError) throw fileError;
   if (!file?.telegram_file_id) return sendMessage(chatId, 'This file is currently unavailable.');
-  const caption = `${file.episodes?.season?.anime?.title || 'Anime'}\n${file.episodes?.season?.name || ''}\nEpisode ${file.episodes?.episode_number || '?'}\n${file.quality} ${String(file.language_type || '').toUpperCase()} (${file.language || 'Unknown'})`;
+
+  const { data: episode, error: episodeError } = await supabase
+    .from('episodes')
+    .select('episode_number, season_id')
+    .eq('id', file.episode_id)
+    .maybeSingle();
+
+  if (episodeError) throw episodeError;
+
+  const { data: season, error: seasonError } = await supabase
+    .from('seasons')
+    .select('name, anime_id')
+    .eq('id', episode?.season_id)
+    .maybeSingle();
+
+  if (seasonError) throw seasonError;
+
+  const { data: anime, error: animeError } = await supabase
+    .from('anime')
+    .select('title')
+    .eq('id', season?.anime_id)
+    .maybeSingle();
+
+  if (animeError) throw animeError;
+
+  const caption = `${anime?.title || 'Anime'}\n${season?.name || ''}\nEpisode ${episode?.episode_number || '?'}\n${file.quality} ${String(file.language_type || '').toUpperCase()} (${file.language || 'Unknown'})`;
   await sendDocument(chatId, file.telegram_file_id, caption, { filename: file.filename || undefined });
   const { error: historyError } = await supabase.from('user_downloads').insert({ telegram_user_id: String(userId), file_id: file.id, quality: file.quality, language_type: file.language_type, language: file.language });
   if (historyError) console.warn('Could not record user download:', historyError.message);
@@ -183,9 +239,54 @@ async function renderFavorites(chatId, messageId, userId) {
 }
 
 async function renderDownloads(chatId, messageId, userId) {
-  const { data: downloads, error } = await supabase.from('user_downloads').select('quality, language_type, files(filename, episodes(episode_number, season(name, anime(title))))').eq('telegram_user_id', String(userId)).order('created_at', { ascending: false }).limit(20);
+  const { data: downloads, error } = await supabase
+    .from('user_downloads')
+    .select('file_id, quality, language_type, created_at')
+    .eq('telegram_user_id', String(userId))
+    .order('created_at', { ascending: false })
+    .limit(20);
+
   if (error) throw error;
-  const lines = (downloads || []).map((download) => `${download.files?.episodes?.season?.anime?.title || 'Anime'} · EP ${download.files?.episodes?.episode_number || '?'} · ${download.quality} ${String(download.language_type || '').toUpperCase()}`);
+
+  const fileIds = [...new Set((downloads || []).map((download) => download.file_id))];
+  const { data: files, error: filesError } = fileIds.length
+    ? await supabase.from('files').select('id, episode_id').in('id', fileIds)
+    : { data: [], error: null };
+
+  if (filesError) throw filesError;
+
+  const episodeIds = [...new Set((files || []).map((file) => file.episode_id))];
+  const { data: episodes, error: episodesError } = episodeIds.length
+    ? await supabase.from('episodes').select('id, episode_number, season_id').in('id', episodeIds)
+    : { data: [], error: null };
+
+  if (episodesError) throw episodesError;
+
+  const seasonIds = [...new Set((episodes || []).map((episode) => episode.season_id))];
+  const { data: seasons, error: seasonsError } = seasonIds.length
+    ? await supabase.from('seasons').select('id, name, anime_id').in('id', seasonIds)
+    : { data: [], error: null };
+
+  if (seasonsError) throw seasonsError;
+
+  const animeIds = [...new Set((seasons || []).map((season) => season.anime_id))];
+  const { data: anime, error: animeError } = animeIds.length
+    ? await supabase.from('anime').select('id, title').in('id', animeIds)
+    : { data: [], error: null };
+
+  if (animeError) throw animeError;
+
+  const fileById = new Map((files || []).map((file) => [file.id, file]));
+  const episodeById = new Map((episodes || []).map((episode) => [episode.id, episode]));
+  const seasonById = new Map((seasons || []).map((season) => [season.id, season]));
+  const animeById = new Map((anime || []).map((entry) => [entry.id, entry]));
+  const lines = (downloads || []).map((download) => {
+    const file = fileById.get(download.file_id);
+    const episode = episodeById.get(file?.episode_id);
+    const season = seasonById.get(episode?.season_id);
+    const entry = animeById.get(season?.anime_id);
+    return `${entry?.title || 'Anime'} · EP ${episode?.episode_number || '?'} · ${download.quality} ${String(download.language_type || '').toUpperCase()}`;
+  });
   await editMessageText(chatId, messageId, `<b>My Downloads</b>\n\n${lines.length ? lines.join('\n') : 'No downloads yet.'}`, { reply_markup: getUserBackKeyboard() });
 }
 
