@@ -1,3 +1,294 @@
+# AniVault
+
+AniVault is a Telegram-controlled anime catalog and authorized media delivery service.
+
+## Requirements
+
+- Node.js 20 or newer
+- A Supabase project
+- A Telegram bot token
+- An AniList API connection
+
+## Environment
+
+Create `.env.local`:
+
+```env
+TELEGRAM_BOT_TOKEN=your_bot_token
+TELEGRAM_ADMIN_ID=your_telegram_user_id
+TELEGRAM_WEBHOOK_SECRET=long_random_webhook_secret
+
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your_server_only_service_role_key
+
+ANILIST_API_URL=https://graphql.anilist.co
+```
+
+Never expose `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, or `SUPABASE_SERVICE_ROLE_KEY` through `NEXT_PUBLIC_*` variables or frontend code.
+
+## Install And Run
+
+```bash
+npm install
+npm test
+npm run dev
+```
+
+Production verification:
+
+```bash
+npm run build
+npm start
+```
+
+## Database Setup
+
+Run [database-schema.sql](database-schema.sql) in the Supabase SQL editor. The script creates the catalog, upload, token, admin-session, user-session, favorites, and download-history tables, plus indexes, cascades, and timestamp triggers.
+
+The main relationships are:
+
+```text
+anime -> seasons -> episodes -> files
+                         |
+                         -> start_tokens
+```
+
+Tokens are exactly 30 alphanumeric characters. A token can target one season, one episode, or one file. There is no all-seasons token.
+
+## Telegram Bot
+
+### Admin
+
+The configured `TELEGRAM_ADMIN_ID` can:
+
+- Add anime from AniList
+- Create seasons
+- Upload and review episode files
+- Detect duplicates and overwrite or ignore them
+- Generate season, episode, and file tokens
+- Browse and delete anime, seasons, episodes, and files
+- View library statistics
+- Repair missing file tokens
+- Remove abandoned uploads older than 24 hours
+- Clear catalog data with the exact confirmation phrase `CLEAR DATABASE`
+
+### Users
+
+Non-admin users can use `/start` to:
+
+- Search and browse anime
+- Open seasons and episodes
+- Select quality and language
+- Receive the authorized Telegram file directly
+- View download history
+- Manage favorites
+
+Existing deep links continue to work:
+
+```text
+/start YOUR_30_CHARACTER_TOKEN
+```
+
+## File Naming
+
+Recommended filename:
+
+```text
+[S01-E05] Jujutsu Kaisen [1080p] [Sub].mkv
+```
+
+The parser extracts season, episode, quality, subtitle/dub type, language, extension, and resolution. Invalid filenames are rejected for correction instead of being silently stored.
+
+## Webhook
+
+After deploying to Vercel, configure the webhook with the same secret used in `.env.local`:
+
+```bash
+curl -X POST "https://api.telegram.org/botYOUR_BOT_TOKEN/setWebhook" \
+  -d "url=https://YOUR_DOMAIN/api/telegram" \
+  -d "secret_token=YOUR_TELEGRAM_WEBHOOK_SECRET"
+```
+
+The endpoint is:
+
+```text
+POST /api/telegram
+```
+
+## API
+
+All catalog routes are read-only. Replace `https://YOUR_DOMAIN` with your local or deployed URL.
+
+### List anime
+
+```bash
+curl "https://YOUR_DOMAIN/api/anime?page=1&perPage=24&q=jujutsu"
+```
+
+Response shape:
+
+```json
+{
+  "ok": true,
+  "page": 1,
+  "perPage": 24,
+  "total": 1,
+  "results": [
+    {
+      "id": "ANM_9E85OA",
+      "title": "Jujutsu Kaisen",
+      "slug": "jujutsu-kaisen",
+      "format": "TV",
+      "status": "FINISHED"
+    }
+  ]
+}
+```
+
+### Search anime
+
+```bash
+curl "https://YOUR_DOMAIN/api/search?q=jujutsu"
+```
+
+### Get anime and seasons
+
+```bash
+curl "https://YOUR_DOMAIN/api/anime/ANM_9E85OA"
+curl "https://YOUR_DOMAIN/api/anime/ANM_9E85OA/seasons"
+```
+
+The seasons endpoint also accepts an AniList numeric ID:
+
+```bash
+curl "https://YOUR_DOMAIN/api/anime/145932/seasons"
+```
+
+Example seasons response:
+
+```json
+{
+  "ok": true,
+  "anime": { "id": "ANM_9E85OA", "title": "Jujutsu Kaisen" },
+  "seasons": [
+    {
+      "id": "SEA_ABC123",
+      "season_number": 1,
+      "name": "Season 1",
+      "episode_count": 24
+    }
+  ]
+}
+```
+
+### Get a season and its episodes
+
+```bash
+curl "https://YOUR_DOMAIN/api/seasons/SEA_ABC123"
+curl "https://YOUR_DOMAIN/api/seasons/SEA_ABC123/episodes"
+```
+
+### Get an episode and its files
+
+```bash
+curl "https://YOUR_DOMAIN/api/episodes/EPI_ABC123"
+curl "https://YOUR_DOMAIN/api/episodes/EPI_ABC123/files"
+```
+
+Files include a server-owned URL such as:
+
+```json
+{
+  "id": "FIL_ABC123",
+  "quality": "1080p",
+  "language_type": "sub",
+  "language": "English",
+  "downloadUrl": "/api/download/30_CHARACTER_FILE_TOKEN"
+}
+```
+
+### Get one file
+
+```bash
+curl "https://YOUR_DOMAIN/api/files/FIL_ABC123"
+```
+
+### Deliver a file
+
+```bash
+curl -L "https://YOUR_DOMAIN/api/download/30_CHARACTER_FILE_TOKEN" \
+  -o episode.mkv
+```
+
+The download route resolves the Telegram file reference server-side. Telegram IDs and bot secrets are never returned by catalog APIs.
+
+## API Errors
+
+Errors use this shape:
+
+```json
+{
+  "ok": false,
+  "error": "Anime not found."
+}
+```
+
+Common status codes:
+
+- `400` invalid or missing input
+- `404` anime, season, episode, file, or token not found
+- `500` database or server failure
+- `502` upstream Telegram delivery failure
+
+## Project Structure
+
+```text
+app/api/
+  anime/route.js
+  anime/[id]/route.js
+  anime/[id]/seasons/route.js
+  seasons/[id]/route.js
+  seasons/[id]/episodes/route.js
+  episodes/[id]/route.js
+  episodes/[id]/files/route.js
+  files/[id]/route.js
+  search/route.js
+  download/[token]/route.js
+  telegram/route.js
+
+bot/handlers/
+  admin.js
+  anime.js
+  delete.js
+  season.js
+  start.js
+  upload.js
+  user.js
+  user-catalog.js
+
+lib/
+  anilist.js
+  parser.js
+  session.js
+  supabase.js
+  telegram.js
+  tokens.js
+```
+
+## Security Notes
+
+- Admin callbacks and admin messages are checked against `TELEGRAM_ADMIN_ID`.
+- Telegram webhook requests are checked against `TELEGRAM_WEBHOOK_SECRET` when configured.
+- Service-role and bot credentials remain server-side.
+- User-facing API responses omit Telegram chat IDs, message IDs, and file IDs.
+- Database deletion requires explicit confirmation in the bot.
+
+## Validation
+
+```bash
+npm test
+npm run build
+```
 # AniVault Bot
 
 A Telegram-controlled anime/media management system with a future web application.
