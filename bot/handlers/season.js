@@ -29,6 +29,9 @@ export async function handleSeasonCallback(callbackQuery) {
   } else if (data.startsWith('add_season_')) {
     const animeId = data.replace('add_season_', '');
     await handleAddSeason(chatId, messageId, userId, animeId);
+  } else if (data.startsWith('add_episode_')) {
+    const seasonId = data.replace('add_episode_', '');
+    await handleAddEpisode(chatId, messageId, userId, seasonId);
   } else if (data.startsWith('view_season_')) {
     const seasonId = data.replace('view_season_', '');
     await handleViewSeason(chatId, messageId, seasonId);
@@ -236,6 +239,88 @@ async function handleDeleteSeason(chatId, messageId, seasonId) {
   } catch (error) {
     console.error('Error deleting season:', error);
     await editMessageText(chatId, messageId, '❌ Error deleting season.');
+  }
+}
+
+/**
+ * Handle "Add Episode" - moves the admin into the file-upload flow for the
+ * selected season, reusing the existing upload_session + upload_files pipeline.
+ *
+ * @param {number} chatId - Telegram chat ID
+ * @param {number} messageId - Message ID to edit
+ * @param {number} userId - Telegram user ID
+ * @param {string} seasonId - Season ID
+ */
+async function handleAddEpisode(chatId, messageId, userId, seasonId) {
+  try {
+    const { data: season, error } = await supabase
+      .from('seasons')
+      .select('id, name, anime_id')
+      .eq('id', seasonId)
+      .maybeSingle();
+
+    if (error || !season) {
+      await editMessageText(chatId, messageId, '❌ Season not found.');
+      return;
+    }
+
+    // Reuse an existing pending upload session for this season, or create one.
+    // upload_files.upload_session_id references upload_sessions(id), so a row
+    // must exist before any file can be uploaded.
+    const { data: existingUploadSession } = await supabase
+      .from('upload_sessions')
+      .select('id')
+      .eq('season_id', seasonId)
+      .eq('status', 'pending')
+      .maybeSingle();
+
+    let uploadSessionId = existingUploadSession?.id;
+
+    if (!uploadSessionId) {
+      uploadSessionId = generateId('UPL');
+
+      const { error: createError } = await supabase
+        .from('upload_sessions')
+        .insert({
+          id: uploadSessionId,
+          telegram_user_id: String(userId),
+          anime_id: season.anime_id,
+          season_id: seasonId,
+          status: 'pending'
+        });
+
+      if (createError) {
+        throw createError;
+      }
+    }
+
+    await setAdminState(userId, chatId, BotState.WAITING_FILES, {
+      season_id: season.id,
+      anime_id: season.anime_id,
+      upload_session_id: uploadSessionId
+    });
+
+    const text = `
+<b>Add Episode</b> - ${season.name}
+
+Send the episode file(s) now.
+
+Filename format:
+<code>Title [S01-E01] [1080p] [sub].mkv</code>
+
+You can send multiple files. When you are finished, click Done.
+`;
+
+    await editMessageText(chatId, messageId, text, {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '✅ Done', callback_data: 'upload_done' }]
+        ]
+      }
+    });
+  } catch (error) {
+    console.error('Error adding episode:', error);
+    await editMessageText(chatId, messageId, '❌ Error starting episode upload.');
   }
 }
 

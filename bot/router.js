@@ -105,7 +105,7 @@ export async function routeCallback(callbackQuery) {
   // Route based on callback data prefix
   if (data.startsWith('admin_') || data.startsWith('anilist_') || data.startsWith('view_anime_')) {
     await handleAnimeCallback(callbackQuery);
-  } else if (data.startsWith('add_season_') || data.startsWith('view_season_') || data.startsWith('delete_season')) {
+  } else if (data.startsWith('add_season_') || data.startsWith('view_season_') || data.startsWith('delete_season') || data.startsWith('add_episode_')) {
     await handleSeasonCallback(callbackQuery);
   } else if (data.startsWith('view_episode_')) {
     await handleViewEpisode(callbackQuery, data.replace('view_episode_', ''));
