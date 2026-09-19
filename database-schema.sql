@@ -120,6 +120,23 @@ CREATE TABLE IF NOT EXISTS admin_sessions (
 );
 
 -- Ensure one active session row per admin (safe to run on existing tables).
+--
+-- NOTE: the unique index is created *after* the table, so databases that were
+-- set up from an earlier version of this script can already hold duplicate rows
+-- for the same admin. Creating the index would then fail, so duplicates are
+-- collapsed first, keeping the most recently updated row per admin.
+DELETE FROM admin_sessions a
+USING admin_sessions b
+WHERE a.telegram_user_id = b.telegram_user_id
+  AND a.updated_at < b.updated_at;
+
+-- Break ties on updated_at (identical timestamps) by keeping the highest id.
+DELETE FROM admin_sessions a
+USING admin_sessions b
+WHERE a.telegram_user_id = b.telegram_user_id
+  AND a.updated_at = b.updated_at
+  AND a.id < b.id;
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_admin_sessions_telegram_user_id_unique
     ON admin_sessions(telegram_user_id);
 
@@ -129,12 +146,29 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_admin_sessions_telegram_user_id_unique
 CREATE TABLE IF NOT EXISTS upload_sessions (
     id TEXT PRIMARY KEY,
     telegram_user_id TEXT NOT NULL,
-    anime_id TEXT REFERENCES anime(id),
-    season_id TEXT REFERENCES seasons(id),
+    -- These are *references*, not dependencies: an upload session is temporary
+    -- and meaningless once its anime/season is gone. Without ON DELETE CASCADE
+    -- a leftover session makes deleting the anime fail on a foreign-key
+    -- violation (upload_sessions has no other FK relationship to the cascade
+    -- chain, so nothing else would clean it up).
+    anime_id TEXT REFERENCES anime(id) ON DELETE CASCADE,
+    season_id TEXT REFERENCES seasons(id) ON DELETE CASCADE,
     status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'processing', 'completed', 'cancelled')),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+-- Migration for databases created before the CASCADE was added. Safe to run
+-- repeatedly: dropping and re-adding the constraint is idempotent by name.
+ALTER TABLE upload_sessions DROP CONSTRAINT IF EXISTS upload_sessions_anime_id_fkey;
+ALTER TABLE upload_sessions
+    ADD CONSTRAINT upload_sessions_anime_id_fkey
+    FOREIGN KEY (anime_id) REFERENCES anime(id) ON DELETE CASCADE;
+
+ALTER TABLE upload_sessions DROP CONSTRAINT IF EXISTS upload_sessions_season_id_fkey;
+ALTER TABLE upload_sessions
+    ADD CONSTRAINT upload_sessions_season_id_fkey
+    FOREIGN KEY (season_id) REFERENCES seasons(id) ON DELETE CASCADE;
 
 -- ============================================
 -- UPLOAD FILES TABLE

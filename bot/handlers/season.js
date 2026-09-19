@@ -89,13 +89,36 @@ Example:
 }
 
 /**
- * Handle add season from database anime
+ * Handle add season from database anime.
+ *
+ * Entered from the anime view, so the anime id is known. The only work here is
+ * persisting the state that routes the admin's next text message to the season
+ * name handler - which means any failure in that write would otherwise leave
+ * the button looking dead. It is therefore wrapped like every other handler.
  */
 async function handleAddSeasonDb(chatId, messageId, userId, animeId) {
-  // Persist state so the next text message is treated as the season name.
-  await setAdminState(userId, chatId, BotState.WAITING_SEASON_NAME, { anime_id: animeId });
+  try {
+    // Confirm the anime still exists before asking for a name, so a stale
+    // button from an older message cannot create an orphaned season.
+    const { data: anime, error } = await supabase
+      .from('anime')
+      .select('id')
+      .eq('id', animeId)
+      .maybeSingle();
 
-  const text = `
+    if (error) {
+      throw error;
+    }
+
+    if (!anime) {
+      await editMessageText(chatId, messageId, '❌ Anime not found. Please add it again from the menu.');
+      return;
+    }
+
+    // Persist state so the next text message is treated as the season name.
+    await setAdminState(userId, chatId, BotState.WAITING_SEASON_NAME, { anime_id: animeId });
+
+    const text = `
 <b>Add Season</b>
 
 Enter the season name:
@@ -104,7 +127,15 @@ Example:
 <code>Season 1</code>
 `;
 
-  await editMessageText(chatId, messageId, text);
+    await editMessageText(chatId, messageId, text);
+  } catch (error) {
+    console.error('Error adding season from anime view:', error);
+    await editMessageText(
+      chatId,
+      messageId,
+      '❌ Error starting season creation. Please try again from /start.'
+    );
+  }
 }
 
 /**

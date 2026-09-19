@@ -265,24 +265,88 @@ Are you sure?
 }
 
 /**
- * Handle actual anime deletion (cascades to seasons/episodes/files via schema)
+ * Handle actual anime deletion.
+ *
+ * `seasons`, `episodes`, `files`, `anime_languages` and `start_tokens` all
+ * reference the anime with ON DELETE CASCADE, so the delete fans out on its
+ * own. `upload_sessions` is the exception: its anime_id/season_id columns were
+ * declared without CASCADE, so any leftover (often abandoned) upload session
+ * makes PostgreSQL reject the whole delete with a foreign-key violation.
+ *
+ * Those temporary rows are meaningless once the anime is gone, so they are
+ * cleared first and only then is the anime removed.
  */
 async function handleDeleteAnime(chatId, messageId, animeId) {
   try {
-    const { error } = await supabase
+    const { data: anime } = await supabase
       .from('anime')
+      .select('id, title')
+      .eq('id', animeId)
+      .maybeSingle();
+
+    if (!anime) {
+      await editMessageText(chatId, messageId, '❌ Anime not found.');
+      return;
+    }
+
+    // Gather the season ids so upload_sessions pointing at *either* the anime
+    // or one of its seasons can be removed.
+    const { data: seasons } = await supabase
+      .from('seasons')
+      .select('id')
+      .eq('anime_id', animeId);
+
+    const seasonIds = (seasons || []).map((s) => s.id);
+
+    const { error: sessionError } = await supabase
+      .from('upload_sessions')
       .delete()
-      .eq('id', animeId);
+      .or(
+        [
+          `anime_id.eq.${animeId}`,
+          seasonIds.length ? `season_id.in.(${seasonIds.join(',')})` : null
+        ]
+          .filter(Boolean)
+          .join(',')
+      );
+
+    if (sessionError) {
+      // Not fatal on its own - report it, but still attempt the anime delete
+      // in case the reference came from somewhere else entirely.
+      console.warn('Could not clear upload_sessions before delete:', sessionError.message);
+    }
+
+    const { error } = await supabase.from('anime').delete().eq('id', animeId);
 
     if (error) {
       throw error;
     }
 
-    await editMessageText(chatId, messageId, '✅ Anime deleted successfully.');
+    await editMessageText(
+      chatId,
+      messageId,
+      `✅ <b>${anime.title}</b> deleted successfully.`
+    );
   } catch (error) {
     console.error('Error deleting anime:', error);
-    await editMessageText(chatId, messageId, '❌ Error deleting anime.');
+    await editMessageText(
+      chatId,
+      messageId,
+      `❌ Error deleting anime.\n\n<code>${escapeHtml(error.message)}</code>`
+    );
   }
+}
+
+/**
+ * Escape text for safe interpolation into an HTML-parsed Telegram message.
+ * @param {string} value
+ * @returns {string}
+ */
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
 }
 
 /**
