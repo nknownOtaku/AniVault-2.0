@@ -111,12 +111,40 @@ async function renderSeason(chatId, messageId, seasonId) {
 }
 
 async function renderEpisode(chatId, messageId, episodeId) {
-  const { data: episode, error } = await supabase.from('episodes').select('id, episode_number, season(id, name, anime(id, title)), files(id, quality, language_type, language)').eq('id', episodeId).maybeSingle();
-  if (error) throw error;
+  const { data: episode, error: episodeError } = await supabase
+    .from('episodes')
+    .select('id, season_id, episode_number, title')
+    .eq('id', episodeId)
+    .maybeSingle();
+
+  if (episodeError) throw episodeError;
   if (!episode) return editMessageText(chatId, messageId, 'Episode not found.', { reply_markup: getUserBackKeyboard() });
-  const files = (episode.files || []).sort((a, b) => String(a.quality).localeCompare(String(b.quality)));
-  const text = `<b>${escapeHtml(episode.season?.anime?.title || 'Anime')}</b>\n${escapeHtml(episode.season?.name || '')}\nEpisode ${episode.episode_number}\n\nAvailable files:`;
-  await editMessageText(chatId, messageId, text, { reply_markup: getUserFileKeyboard(files, episode.id, episode.season?.id) });
+
+  const { data: season, error: seasonError } = await supabase
+    .from('seasons')
+    .select('id, name, anime_id')
+    .eq('id', episode.season_id)
+    .maybeSingle();
+
+  const { data: files, error: filesError } = await supabase
+    .from('files')
+    .select('id, quality, language_type, language')
+    .eq('episode_id', episode.id)
+    .order('quality', { ascending: true });
+
+  if (seasonError || filesError) throw seasonError || filesError;
+
+  const { data: anime, error: animeError } = await supabase
+    .from('anime')
+    .select('title')
+    .eq('id', season?.anime_id)
+    .maybeSingle();
+
+  if (animeError) throw animeError;
+
+  const sortedFiles = (files || []).sort((a, b) => String(a.quality).localeCompare(String(b.quality)));
+  const text = `<b>${escapeHtml(anime?.title || 'Anime')}</b>\n${escapeHtml(season?.name || '')}\nEpisode ${episode.episode_number}\n\nAvailable files:`;
+  await editMessageText(chatId, messageId, text, { reply_markup: getUserFileKeyboard(sortedFiles, episode.id, season?.id) });
 }
 
 async function renderEpisodeNavigation(chatId, messageId, episodeId) {

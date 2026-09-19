@@ -14,6 +14,8 @@ import { getDownloadUrl, getTelegramFilePath } from '../../../../lib/telegram.js
 export async function GET(request, { params }) {
   try {
     const { token } = await params;
+    const debugRequested = new URL(request.url).searchParams.get('debug') === '1';
+    const debugEnabled = process.env.DOWNLOAD_DEBUG === 'true';
 
     if (!token || !/^[A-Za-z0-9]{30}$/.test(token)) {
       return Response.json({ ok: false, error: 'Invalid download token.' }, { status: 400 });
@@ -48,15 +50,35 @@ export async function GET(request, { params }) {
       return Response.json({ ok: false, error: 'File is not available.' }, { status: 404 });
     }
 
+    let telegramResponse;
     let filePath;
     try {
-      filePath = await getTelegramFilePath(file.telegram_file_id);
+      telegramResponse = await getTelegramFilePath(file.telegram_file_id);
+      filePath = telegramResponse;
     } catch (error) {
       console.error('[ERROR] Telegram getFile failed:', error.message);
-      return Response.json(
-        { ok: false, error: 'Telegram could not resolve this file. It may be expired or too large for browser delivery.' },
-        { status: 502 }
-      );
+      const response = {
+        ok: false,
+        error: 'Telegram could not resolve this file. It may be expired or too large for browser delivery.',
+        debug: debugRequested && debugEnabled ? { telegramResolved: false, telegramError: error.message } : undefined
+      };
+      return Response.json(response, { status: 502 });
+    }
+
+    if (debugRequested && debugEnabled) {
+      return Response.json({
+        ok: true,
+        debug: {
+          telegramResolved: true,
+          telegramFilePath: filePath,
+          file: {
+            filename: file.filename,
+            mimeType: file.mime_type || null,
+            storedSize: file.file_size || null,
+            hasTelegramFileId: Boolean(file.telegram_file_id)
+          }
+        }
+      });
     }
 
     const headers = {};
@@ -67,7 +89,13 @@ export async function GET(request, { params }) {
 
     const upstream = await fetch(getDownloadUrl(filePath), { headers });
     if (!upstream.ok && upstream.status !== 206) {
-      return Response.json({ ok: false, error: 'File delivery failed.' }, { status: 502 });
+      return Response.json({
+        ok: false,
+        error: 'File delivery failed.',
+        debug: debugRequested && debugEnabled
+          ? { telegramResolved: true, telegramPathAvailable: Boolean(filePath), upstreamStatus: upstream.status }
+          : undefined
+      }, { status: 502 });
     }
 
     const responseHeaders = new Headers({
@@ -75,6 +103,13 @@ export async function GET(request, { params }) {
       'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(file.filename || 'download')}`,
       'Cache-Control': 'private, no-store'
     });
+
+    if (debugRequested && debugEnabled) {
+      responseHeaders.set('X-AniVault-Telegram-Resolved', 'true');
+      responseHeaders.set('X-AniVault-Upstream-Status', String(upstream.status));
+      responseHeaders.set('X-AniVault-Upstream-Content-Length', upstream.headers.get('content-length') || 'unknown');
+      responseHeaders.set('X-AniVault-File-Path-Available', filePath ? 'true' : 'false');
+    }
 
     for (const name of ['content-length', 'content-range', 'accept-ranges']) {
       const value = upstream.headers.get(name);
