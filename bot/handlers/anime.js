@@ -2,6 +2,7 @@ import { sendMessage, editMessageText, answerCallbackQuery } from '../../lib/tel
 import { getAniListSearchKeyboard, getAnimeDetailsKeyboard } from '../keyboards/admin.js';
 import { searchAnime, getAnimeDetails } from '../../lib/anilist.js';
 import { supabase } from '../../lib/supabase.js';
+import { generateId } from '../../lib/tokens.js';
 import { setAdminState, getAdminState, BotState } from '../../lib/session.js';
 
 /**
@@ -93,7 +94,24 @@ async function handleAniListSelect(chatId, messageId, userId, anilistId) {
     const episodes = details.episodes || '?';
     const description = (details.description || 'No description').replace(/<[^>]*>/g, '').substring(0, 500);
     const coverImage = details.coverImage?.large;
+    const bannerImage = details.bannerImage || null;
     const year = details.seasonYear || '?';
+    const startDate = formatAniListDate(details.startDate);
+    const endDate = formatAniListDate(details.endDate);
+
+    // Persist the anime so the season/episode workflow has a record to attach to.
+    const animeId = await upsertAnimeRecord({
+      anilistId,
+      title,
+      nativeTitle,
+      description,
+      posterUrl: coverImage,
+      bannerUrl: bannerImage,
+      format,
+      status,
+      startDate,
+      endDate
+    });
 
     const text = `
 <b>${title}</b> ${nativeTitle ? `<i>(${nativeTitle})</i>` : ''}
@@ -110,15 +128,82 @@ Ready to add a season.
 `;
 
     await editMessageText(chatId, messageId, text, {
-      reply_markup: getAnimeDetailsKeyboard(anilistId)
+      reply_markup: getAnimeDetailsKeyboard(animeId)
     });
 
     // We've moved past the search list into viewing a specific anime.
-    await setAdminState(userId, chatId, BotState.VIEWING_ANIME, { anilistId });
+    await setAdminState(userId, chatId, BotState.VIEWING_ANIME, { anilistId, anime_id: animeId });
   } catch (error) {
     console.error('Error getting anime details:', error);
     await editMessageText(chatId, messageId, '❌ Error fetching anime details from AniList.');
   }
+}
+
+/**
+ * Convert an AniList fuzzy date object into an ISO date string (or null).
+ * @param {object} date - AniList date { year, month, day }
+ * @returns {string|null} ISO date string
+ */
+function formatAniListDate(date) {
+  if (!date || !date.year) {
+    return null;
+  }
+  const month = String(date.month || 1).padStart(2, '0');
+  const day = String(date.day || 1).padStart(2, '0');
+  return `${date.year}-${month}-${day}`;
+}
+
+/**
+ * Create or update the `anime` row for an AniList entry.
+ * Returns the internal anime ID.
+ *
+ * @param {object} anime - Anime fields to persist
+ * @returns {Promise<string>} Internal anime ID
+ */
+async function upsertAnimeRecord(anime) {
+  const { data: existing } = await supabase
+    .from('anime')
+    .select('id')
+    .eq('anilist_id', anime.anilistId)
+    .maybeSingle();
+
+  const payload = {
+    anilist_id: anime.anilistId,
+    title: anime.title,
+    native_title: anime.nativeTitle || null,
+    description: anime.description || null,
+    poster_url: anime.posterUrl || null,
+    banner_url: anime.bannerUrl || null,
+    format: anime.format || null,
+    status: anime.status || null,
+    start_date: anime.startDate || null,
+    end_date: anime.endDate || null,
+    updated_at: new Date().toISOString()
+  };
+
+  if (existing) {
+    const { error } = await supabase
+      .from('anime')
+      .update(payload)
+      .eq('id', existing.id);
+
+    if (error) {
+      throw error;
+    }
+
+    return existing.id;
+  }
+
+  const animeId = generateId('ANM');
+  const { error } = await supabase
+    .from('anime')
+    .insert({ id: animeId, ...payload });
+
+  if (error) {
+    throw error;
+  }
+
+  return animeId;
 }
 
 /**

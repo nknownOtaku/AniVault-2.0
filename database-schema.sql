@@ -175,31 +175,38 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- Drop first so this script is safely re-runnable (CREATE TRIGGER has no IF NOT EXISTS).
+DROP TRIGGER IF EXISTS update_anime_updated_at ON anime;
 CREATE TRIGGER update_anime_updated_at
     BEFORE UPDATE ON anime
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_seasons_updated_at ON seasons;
 CREATE TRIGGER update_seasons_updated_at
     BEFORE UPDATE ON seasons
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_episodes_updated_at ON episodes;
 CREATE TRIGGER update_episodes_updated_at
     BEFORE UPDATE ON episodes
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_files_updated_at ON files;
 CREATE TRIGGER update_files_updated_at
     BEFORE UPDATE ON files
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_admin_sessions_updated_at ON admin_sessions;
 CREATE TRIGGER update_admin_sessions_updated_at
     BEFORE UPDATE ON admin_sessions
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_upload_sessions_updated_at ON upload_sessions;
 CREATE TRIGGER update_upload_sessions_updated_at
     BEFORE UPDATE ON upload_sessions
     FOR EACH ROW

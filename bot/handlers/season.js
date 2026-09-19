@@ -44,23 +44,20 @@ export async function handleSeasonCallback(callbackQuery) {
 /**
  * Handle add season (from AniList selection)
  */
-async function handleAddSeason(chatId, messageId, userId, anilistId) {
-  // First, we need to create or get the anime record
+async function handleAddSeason(chatId, messageId, userId, animeId) {
+  // The anime row is created when the admin selects it from AniList search.
   try {
     const { data: animeData } = await supabase
       .from('anime')
       .select('id')
-      .eq('anilist_id', anilistId)
-      .single();
+      .eq('id', animeId)
+      .maybeSingle();
 
-    let animeId;
     if (!animeData) {
-      // Anime doesn't exist yet, need to create it first
-      await editMessageText(chatId, messageId, '❌ Please complete the anime creation first.');
+      // Anime record is missing - the selection step didn't persist it.
+      await editMessageText(chatId, messageId, '❌ Anime not found. Please add it again from the menu.');
       return;
     }
-
-    animeId = animeData.id;
 
     const text = `
 <b>Add Season</b>
