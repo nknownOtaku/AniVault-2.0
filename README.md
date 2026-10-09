@@ -17,6 +17,7 @@ Create `.env.local`:
 TELEGRAM_BOT_TOKEN=your_bot_token
 TELEGRAM_ADMIN_ID=your_telegram_user_id
 TELEGRAM_WEBHOOK_SECRET=long_random_webhook_secret
+CRON_SECRET=long_random_cron_secret
 
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your_server_only_service_role_key
@@ -24,7 +25,7 @@ SUPABASE_SERVICE_ROLE_KEY=your_server_only_service_role_key
 ANILIST_API_URL=https://graphql.anilist.co
 ```
 
-Never expose `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, or `SUPABASE_SERVICE_ROLE_KEY` through `NEXT_PUBLIC_*` variables or frontend code.
+Never expose `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, `CRON_SECRET`, or `SUPABASE_SERVICE_ROLE_KEY` through `NEXT_PUBLIC_*` variables or frontend code.
 
 ## Install And Run
 
@@ -445,6 +446,22 @@ After deployment, set the webhook:
 ```
 https://api.telegram.org/bot<YOUR_TOKEN>/setWebhook?url=https://your-vercel-url.vercel.app/api/telegram
 ```
+
+### File Auto-Delete Scheduler (Vercel Hobby)
+
+Vercel Hobby does not support the minute-by-minute Cron Job used for file cleanup. Use an external scheduler such as cron-job.org to send an authenticated `GET` request to:
+
+```text
+https://your-vercel-url.vercel.app/api/cron/delete-expired
+```
+
+Set the schedule to every minute and add this request header, using the same `CRON_SECRET` value configured in Vercel:
+
+```text
+Authorization: Bearer YOUR_CRON_SECRET
+```
+
+The endpoint only processes due deletion records and rejects requests without the matching bearer token. The SQL schema must be applied before enabling this job.
 
 ## Usage
 
