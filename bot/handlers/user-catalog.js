@@ -1,5 +1,6 @@
-import { sendDocument, sendMessage, editMessageText, answerCallbackQuery } from '../../lib/telegram.js';
+import { sendMessage, editMessageText, answerCallbackQuery, deleteMessage } from '../../lib/telegram.js';
 import { supabase } from '../../lib/supabase.js';
+import { sendTemporaryFile } from '../../lib/file-delivery.js';
 import { getUserHomeKeyboard, getUserBackKeyboard, getUserAnimeKeyboard, getUserEpisodeKeyboard, getUserFileKeyboard } from '../keyboards/user.js';
 
 const UserState = { IDLE: 'IDLE', WAITING_SEARCH: 'WAITING_SEARCH' };
@@ -60,6 +61,14 @@ export async function handleUserCallback(callbackQuery) {
       await renderEpisode(chatId, messageId, data.replace('user_episode_', ''));
     } else if (data.startsWith('user_file_')) {
       await deliverFile(chatId, userId, data.replace('user_file_', ''));
+    } else if (data.startsWith('user_close_delivery_')) {
+      const fileMessageId = Number(data.replace('user_close_delivery_', ''));
+      if (Number.isSafeInteger(fileMessageId)) {
+        await deleteMessage(chatId, fileMessageId).catch((error) => {
+          console.warn('Could not close delivered file message:', error.message);
+        });
+      }
+      await deleteMessage(chatId, messageId);
     } else if (data.startsWith('user_favorite_')) {
       await toggleFavorite(chatId, messageId, userId, data.replace('user_favorite_', ''));
     }
@@ -215,7 +224,13 @@ async function deliverFile(chatId, userId, fileId) {
   if (animeError) throw animeError;
 
   const caption = `${anime?.title || 'Anime'}\n${season?.name || ''}\nEpisode ${episode?.episode_number || '?'}\n${file.quality} ${String(file.language_type || '').toUpperCase()} (${file.language || 'Unknown'})`;
-  await sendDocument(chatId, file.telegram_file_id, caption, { filename: file.filename || undefined });
+  await sendTemporaryFile({
+    chatId,
+    fileId: file.id,
+    telegramFileId: file.telegram_file_id,
+    caption,
+    filename: file.filename || undefined
+  });
   const { error: historyError } = await supabase.from('user_downloads').insert({ telegram_user_id: String(userId), file_id: file.id, quality: file.quality, language_type: file.language_type, language: file.language });
   if (historyError) console.warn('Could not record user download:', historyError.message);
 }

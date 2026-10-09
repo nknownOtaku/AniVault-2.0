@@ -1,5 +1,6 @@
-import { sendDocument, sendMessage } from '../../lib/telegram.js';
+import { sendMessage } from '../../lib/telegram.js';
 import { supabase } from '../../lib/supabase.js';
+import { sendTemporaryFile } from '../../lib/file-delivery.js';
 import { getUserBackKeyboard, getUserFileKeyboard, getUserEpisodeKeyboard } from '../keyboards/user.js';
 
 /**
@@ -235,8 +236,13 @@ async function handleFileToken(chatId, tokenRow) {
   ].join('\n');
 
   try {
-    await sendDocument(chatId, file.telegram_file_id, caption, {
-      filename: file.filename || undefined
+    await sendTemporaryFile({
+      chatId,
+      fileId: file.id,
+      telegramFileId: file.telegram_file_id,
+      caption,
+      filename: file.filename || undefined,
+      startToken: tokenRow.token
     });
   } catch (err) {
     console.error('Error delivering file for token:', err);

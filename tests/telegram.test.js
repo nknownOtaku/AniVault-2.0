@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { formatBotText, toSmallCaps } from '../lib/telegram.js';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 test('small caps preserve sensitive values inside code blocks', () => {
   const token = 'a8Kd92LmP0xQ7wNz3RtY5UvBc1HsEf';
@@ -12,4 +17,16 @@ test('small caps preserve sensitive values inside code blocks', () => {
 
 test('normal visible bot text still uses small caps', () => {
   assert.equal(toSmallCaps('Welcome'), 'ᴡᴇʟᴄᴏᴍᴇ');
+});
+
+test('temporary file delivery schedules deletion and replies with controls', () => {
+  const deliverySource = readFileSync(join(__dirname, '..', 'lib', 'file-delivery.js'), 'utf8');
+  const cronSource = readFileSync(join(__dirname, '..', 'app', 'api', 'cron', 'delete-expired', 'route.js'), 'utf8');
+
+  assert.match(deliverySource, /scheduled_message_deletions/);
+  assert.match(deliverySource, /reply_parameters: \{ message_id: fileMessageId \}/);
+  assert.match(deliverySource, /\?start=\$\{encodeURIComponent\(token\)\}/);
+  assert.match(deliverySource, /user_close_delivery_/);
+  assert.match(cronSource, /Previous Message was Deleted/);
+  assert.match(cronSource, /deleteMessage\(task\.telegram_chat_id, task\.file_message_id\)/);
 });
