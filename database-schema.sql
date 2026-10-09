@@ -164,6 +164,18 @@ CREATE TABLE IF NOT EXISTS user_sessions (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS telegram_users (
+    telegram_user_id TEXT PRIMARY KEY,
+    chat_id TEXT NOT NULL,
+    username TEXT,
+    first_name TEXT,
+    last_name TEXT,
+    language_code TEXT,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS user_favorites (
     id TEXT PRIMARY KEY DEFAULT md5(random()::text || clock_timestamp()::text),
     telegram_user_id TEXT NOT NULL,
@@ -184,6 +196,7 @@ CREATE TABLE IF NOT EXISTS user_downloads (
 
 CREATE INDEX IF NOT EXISTS idx_user_favorites_user_id ON user_favorites(telegram_user_id);
 CREATE INDEX IF NOT EXISTS idx_user_downloads_user_id_created_at ON user_downloads(telegram_user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_telegram_users_active ON telegram_users(is_active);
 
 -- ============================================
 -- UPLOAD SESSIONS TABLE
@@ -302,6 +315,12 @@ CREATE TRIGGER update_user_sessions_updated_at
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_telegram_users_updated_at ON telegram_users;
+CREATE TRIGGER update_telegram_users_updated_at
+    BEFORE UPDATE ON telegram_users
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
 -- ============================================
 -- COMMENTS
 -- ============================================
@@ -312,5 +331,6 @@ COMMENT ON TABLE files IS 'Media file records with Telegram storage references';
 COMMENT ON TABLE anime_languages IS 'Available subtitle/dub languages per anime';
 COMMENT ON TABLE start_tokens IS 'Secure 30-character access tokens for users';
 COMMENT ON TABLE admin_sessions IS 'Bot state management for admin workflow';
+COMMENT ON TABLE telegram_users IS 'Private Telegram users who have interacted with the bot and can receive broadcasts';
 COMMENT ON TABLE upload_sessions IS 'Temporary upload session tracking';
 COMMENT ON TABLE upload_files IS 'Temporary file tracking before confirmation';

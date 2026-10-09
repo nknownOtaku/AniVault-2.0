@@ -7,6 +7,7 @@ export function getAdminKeyboard() {
       [{ text: '➕ Add Anime', callback_data: 'admin_add_anime' }],
       [{ text: '📚 List Anime', callback_data: 'admin_list_anime' }],
       [{ text: '🗑 Delete Anime', callback_data: 'admin_delete_anime' }],
+      [{ text: '📣 Broadcast', callback_data: 'admin_broadcast' }],
       [{ text: '📊 Library Status', callback_data: 'admin_stats' }],
       [{ text: '🧹 Clear Database', callback_data: 'admin_clear_database' }]
     ]

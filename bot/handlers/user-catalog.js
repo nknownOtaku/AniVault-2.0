@@ -295,7 +295,7 @@ async function getUserSession(userId) {
   return data;
 }
 
-async function saveUserSession(userId, chatId, state, data) {
+export async function saveUserSession(userId, chatId, state, data) {
   const { error } = await supabase.from('user_sessions').upsert({ telegram_user_id: String(userId), chat_id: String(chatId), state, data, updated_at: new Date().toISOString() }, { onConflict: 'telegram_user_id' });
   if (error) throw error;
 }

@@ -1,6 +1,6 @@
-import { editMessageText, sendMessage, answerCallbackQuery } from '../../lib/telegram.js';
+import { editMessageText, sendMessage, sendChatAction, copyMessage, answerCallbackQuery } from '../../lib/telegram.js';
 import { supabase } from '../../lib/supabase.js';
-import { clearAdminState, setAdminState, BotState } from '../../lib/session.js';
+import { clearAdminState, setAdminState, getAdminState, BotState } from '../../lib/session.js';
 import { generateId, generateToken } from '../../lib/tokens.js';
 
 const CLEAR_DATABASE_PHRASE = 'CLEAR DATABASE';
@@ -25,9 +25,129 @@ export async function handleAdminCallback(callbackQuery) {
   } else if (callbackQuery.data === 'admin_clear_database_cancel') {
     await clearAdminState(userId, chatId);
     await editMessageText(chatId, messageId, 'Maintenance cancelled.');
+  } else if (callbackQuery.data === 'admin_broadcast') {
+    await requestBroadcast(chatId, messageId, userId);
+  } else if (callbackQuery.data === 'admin_broadcast_confirm') {
+    await answerCallbackQuery(callbackQuery.id, 'Broadcast started.');
+    await sendBroadcast(callbackQuery);
+    return;
+  } else if (callbackQuery.data === 'admin_broadcast_cancel') {
+    await clearAdminState(userId, chatId);
+    await editMessageText(chatId, messageId, 'Broadcast cancelled.');
   }
 
   await answerCallbackQuery(callbackQuery.id);
+}
+
+/**
+ * Save the selected source message and ask for broadcast confirmation.
+ * @param {object} message
+ */
+export async function handleBroadcastMessage(message) {
+  const chatId = message.chat.id;
+  const userId = message.from.id;
+
+  if (!message.message_id) {
+    await sendMessage(chatId, 'I could not read that message. Please send it again.');
+    return;
+  }
+
+  try {
+    const { count, error } = await supabase
+      .from('telegram_users')
+      .select('telegram_user_id', { count: 'exact', head: true })
+      .eq('is_active', true);
+
+    if (error) throw error;
+
+    await setAdminState(userId, chatId, BotState.WAITING_BROADCAST_CONFIRM, {
+      source_chat_id: String(chatId),
+      source_message_id: message.message_id
+    });
+
+    await sendMessage(chatId, `Ready to send this message to ${count || 0} registered user(s)?`, {
+      reply_markup: {
+        inline_keyboard: [[
+          { text: 'Send to all', callback_data: 'admin_broadcast_confirm' },
+          { text: 'Cancel', callback_data: 'admin_broadcast_cancel' }
+        ]]
+      }
+    });
+  } catch (error) {
+    console.error('Error preparing broadcast:', error);
+    await clearAdminState(userId, chatId);
+    await sendMessage(chatId, 'Could not prepare the broadcast. Please try again.');
+  }
+}
+
+async function sendBroadcast(callbackQuery) {
+  const chatId = callbackQuery.message.chat.id;
+  const userId = callbackQuery.from.id;
+  const session = await getAdminState(userId);
+  const { source_chat_id: sourceChatId, source_message_id: sourceMessageId } = session?.data || {};
+
+  if (session?.state !== BotState.WAITING_BROADCAST_CONFIRM || !sourceChatId || !sourceMessageId) {
+    await sendMessage(chatId, 'This broadcast has expired. Please start again.');
+    return;
+  }
+
+  await clearAdminState(userId, chatId);
+
+  try {
+    const recipientChatIds = new Set();
+    const pageSize = 1000;
+    let offset = 0;
+
+    while (true) {
+      const { data: users, error } = await supabase
+        .from('telegram_users')
+        .select('chat_id')
+        .eq('is_active', true)
+        .order('telegram_user_id', { ascending: true })
+        .range(offset, offset + pageSize - 1);
+
+      if (error) throw error;
+
+      for (const user of users || []) {
+        if (user.chat_id && String(user.chat_id) !== String(chatId)) {
+          recipientChatIds.add(String(user.chat_id));
+        }
+      }
+
+      if (!users || users.length < pageSize) break;
+      offset += pageSize;
+    }
+
+    await sendMessage(chatId, `Broadcast started for ${recipientChatIds.size} user(s).`);
+
+    let delivered = 0;
+    let failed = 0;
+
+    for (const recipientChatId of recipientChatIds) {
+      try {
+        await sendChatAction(recipientChatId, 'typing').catch(() => {});
+        await copyMessage(recipientChatId, sourceChatId, sourceMessageId);
+        delivered += 1;
+      } catch (error) {
+        failed += 1;
+        console.warn('Broadcast delivery failed:', recipientChatId, error.message);
+      }
+    }
+
+    await sendMessage(chatId, `Broadcast complete. Delivered: ${delivered}. Failed: ${failed}.`);
+  } catch (error) {
+    console.error('Error sending broadcast:', error);
+    await sendMessage(chatId, 'Broadcast stopped because recipients could not be loaded.');
+  }
+}
+
+async function requestBroadcast(chatId, messageId, userId) {
+  await setAdminState(userId, chatId, BotState.WAITING_BROADCAST_MESSAGE, {});
+  await editMessageText(chatId, messageId, 'Send the text you want to broadcast to registered users.', {
+    reply_markup: {
+      inline_keyboard: [[{ text: 'Cancel', callback_data: 'admin_broadcast_cancel' }]]
+    }
+  });
 }
 
 /**

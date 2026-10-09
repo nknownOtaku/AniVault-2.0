@@ -3,10 +3,11 @@ import { handleAnimeCallback, handleAnimeMessage } from './handlers/anime.js';
 import { handleSeasonCallback, handleSeasonNameInput } from './handlers/season.js';
 import { handleFileUpload, handleUploadDone, handleConfirmUpload, handleCancelUpload, handleViewEpisode, handleGenerateToken, handleDuplicateStrategy } from './handlers/upload.js';
 import { handleDeleteCallback } from './handlers/delete.js';
-import { handleAdminCallback, handleDatabaseClearConfirmation } from './handlers/admin.js';
+import { handleAdminCallback, handleDatabaseClearConfirmation, handleBroadcastMessage } from './handlers/admin.js';
 import { handleUserCallback, handleUserMessage } from './handlers/user-catalog.js';
 import { sendMessage, answerCallbackQuery } from '../lib/telegram.js';
 import { getAdminState, setAdminState, BotState } from '../lib/session.js';
+import { saveTelegramUser } from '../lib/users.js';
 
 // Re-export the state machine so existing imports keep working.
 export { BotState };
@@ -42,6 +43,14 @@ export async function routeMessage(message) {
 
   const isAdmin = String(userId) === String(process.env.TELEGRAM_ADMIN_ID);
 
+  if (!isAdmin) {
+    try {
+      await saveTelegramUser(message.from, message.chat);
+    } catch (error) {
+      console.warn('Could not save Telegram user:', error.message);
+    }
+  }
+
   // /start is handled before the admin gate: plain `/start` shows the admin
   // menu to the admin (and is refused inside the handler for everyone else),
   // while `/start <token>` is the *user-facing* entry point and must be
@@ -67,6 +76,11 @@ export async function routeMessage(message) {
   // Get session
   const session = await getAdminSession(userId);
   const currentState = session?.state || BotState.IDLE;
+
+  if (currentState === BotState.WAITING_BROADCAST_MESSAGE) {
+    await handleBroadcastMessage(message);
+    return;
+  }
 
   // Handle text messages based on state
   if (message.text) {
@@ -110,6 +124,11 @@ export async function routeCallback(callbackQuery) {
   const data = callbackQuery.data;
 
   if (data?.startsWith('user_')) {
+    try {
+      await saveTelegramUser(callbackQuery.from, callbackQuery.message?.chat);
+    } catch (error) {
+      console.warn('Could not save Telegram user:', error.message);
+    }
     await handleUserCallback(callbackQuery);
     return;
   }
@@ -129,7 +148,7 @@ export async function routeCallback(callbackQuery) {
   // Order matters: episode and file deletion prefixes (@see delete.js) must be
   // checked before the broader season/upload branches, otherwise a callback
   // such as `delete_episode_confirm_...` would fall into the wrong handler.
-  if (data === 'admin_stats' || data === 'admin_repair_tokens' || data === 'admin_cleanup_uploads' || data === 'admin_clear_database' || data === 'admin_clear_database_cancel') {
+  if (data === 'admin_stats' || data === 'admin_repair_tokens' || data === 'admin_cleanup_uploads' || data === 'admin_clear_database' || data === 'admin_clear_database_cancel' || data === 'admin_broadcast' || data === 'admin_broadcast_confirm' || data === 'admin_broadcast_cancel') {
     await handleAdminCallback(callbackQuery);
   } else if (data.startsWith('delete_episode_') || data.startsWith('cancel_delete_episode_') || data.startsWith('delete_file_') || data.startsWith('cancel_delete_file_')) {
     await handleDeleteCallback(callbackQuery);
