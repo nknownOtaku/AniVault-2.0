@@ -3,6 +3,11 @@
 -- Enable UUID extension if needed
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
+-- Supabase extensions used to run the scheduled Telegram cleanup job.
+CREATE SCHEMA IF NOT EXISTS extensions;
+CREATE EXTENSION IF NOT EXISTS pg_cron;
+CREATE EXTENSION IF NOT EXISTS pg_net WITH SCHEMA extensions;
+
 -- ============================================
 -- ANIME TABLE
 -- ============================================
@@ -347,3 +352,30 @@ COMMENT ON TABLE telegram_users IS 'Private Telegram users who have interacted w
 COMMENT ON TABLE scheduled_message_deletions IS 'Scheduled Telegram file message deletions and notice updates';
 COMMENT ON TABLE upload_sessions IS 'Temporary upload session tracking';
 COMMENT ON TABLE upload_files IS 'Temporary file tracking before confirmation';
+
+-- Before running this schema, save these named secrets in Supabase Vault:
+--   anivault_cleanup_url    -> https://<deployment>/api/cron/delete-expired
+--   anivault_cleanup_secret -> the same value as Vercel's CRON_SECRET
+-- Vault must be enabled in the Supabase dashboard.
+SELECT cron.schedule(
+    'anivault-file-cleanup',
+    '* * * * *',
+    $cleanup$
+        SELECT net.http_get(
+            url := (
+                SELECT decrypted_secret
+                FROM vault.decrypted_secrets
+                WHERE name = 'anivault_cleanup_url'
+            ),
+            headers := jsonb_build_object(
+                'Authorization',
+                'Bearer ' || (
+                    SELECT decrypted_secret
+                    FROM vault.decrypted_secrets
+                    WHERE name = 'anivault_cleanup_secret'
+                )
+            ),
+            timeout_milliseconds := 10000
+        );
+    $cleanup$
+);

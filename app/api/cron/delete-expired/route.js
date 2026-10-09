@@ -53,8 +53,7 @@ export async function GET(request) {
         await editMessageText(
           task.telegram_chat_id,
           task.notice_message_id,
-          '<blockquote>›› Previous Message was Deleted.</blockquote>',
-          { preserveFormatting: true }
+          '<blockquote>›› Previous Message was Deleted.</blockquote>'
         );
       } catch (error) {
         if (!isAlreadyDeleted(error)) throw error;

@@ -44,7 +44,12 @@ npm start
 
 ## Database Setup
 
-Run [database-schema.sql](database-schema.sql) in the Supabase SQL editor. The script creates the catalog, upload, token, admin-session, user-session, favorites, and download-history tables, plus indexes, cascades, and timestamp triggers.
+Enable the Vault extension in Supabase and save these two named secrets before running [database-schema.sql](database-schema.sql) in the SQL editor:
+
+- `anivault_cleanup_url`: `https://your-vercel-url.vercel.app/api/cron/delete-expired`
+- `anivault_cleanup_secret`: the same value configured as `CRON_SECRET` in Vercel
+
+The schema creates the catalog, upload, token, user, and deletion-queue tables, indexes, cascades, and timestamp triggers. It also enables `pg_cron` and `pg_net` and schedules the authenticated cleanup endpoint every minute, so Vercel Hobby Cron is not needed.
 
 The main relationships are:
 
@@ -449,19 +454,13 @@ https://api.telegram.org/bot<YOUR_TOKEN>/setWebhook?url=https://your-vercel-url.
 
 ### File Auto-Delete Scheduler (Vercel Hobby)
 
-Vercel Hobby does not support the minute-by-minute Cron Job used for file cleanup. Use an external scheduler such as cron-job.org to send an authenticated `GET` request to:
+The database stores each file message's deletion time. Supabase Cron can poll due records every minute and call the cleanup endpoint, avoiding Vercel Hobby's daily Cron limit.
 
-```text
-https://your-vercel-url.vercel.app/api/cron/delete-expired
-```
+1. Set `CRON_SECRET` in Vercel.
+2. In Supabase, enable Vault and save the URL and matching secret under the names above.
+3. Run `database-schema.sql`; it enables `pg_cron` and `pg_net` and installs the recurring job.
 
-Set the schedule to every minute and add this request header, using the same `CRON_SECRET` value configured in Vercel:
-
-```text
-Authorization: Bearer YOUR_CRON_SECRET
-```
-
-The endpoint only processes due deletion records and rejects requests without the matching bearer token. The SQL schema must be applied before enabling this job.
+Supabase Cron runs the authenticated cleanup endpoint once per minute; due file messages are deleted and their notices updated. If you change the deployment URL or secret, update the corresponding Vault secrets.
 
 ## Usage
 
