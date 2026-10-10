@@ -61,13 +61,7 @@ export async function handleUserCallback(callbackQuery) {
       await renderEpisode(chatId, messageId, data.replace('user_episode_', ''));
     } else if (data.startsWith('user_file_')) {
       await deliverFile(chatId, userId, data.replace('user_file_', ''));
-    } else if (data.startsWith('user_close_delivery_')) {
-      const fileMessageId = Number(data.replace('user_close_delivery_', ''));
-      if (Number.isSafeInteger(fileMessageId)) {
-        await deleteMessage(chatId, fileMessageId).catch((error) => {
-          console.warn('Could not close delivered file message:', error.message);
-        });
-      }
+    } else if (data === 'user_close_delivery') {
       await deleteMessage(chatId, messageId);
     } else if (data.startsWith('user_favorite_')) {
       await toggleFavorite(chatId, messageId, userId, data.replace('user_favorite_', ''));

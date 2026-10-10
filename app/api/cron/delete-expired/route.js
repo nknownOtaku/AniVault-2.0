@@ -14,7 +14,7 @@ export async function GET(request) {
 
   const { data: dueTasks, error: queryError } = await supabase
     .from('scheduled_message_deletions')
-    .select('id, telegram_chat_id, file_message_id, notice_message_id')
+    .select('id, telegram_chat_id, file_message_id, notice_message_id, file_url')
     .eq('status', 'pending')
     .lte('due_at', new Date().toISOString())
     .order('due_at', { ascending: true })
@@ -53,7 +53,18 @@ export async function GET(request) {
         await editMessageText(
           task.telegram_chat_id,
           task.notice_message_id,
-          '<blockquote>›› Previous Message was Deleted.</blockquote>'
+          [
+            '<blockquote>›› Previous Message was Deleted.</blockquote>',
+            '<blockquote>If you are authorized to access this file again, use the button below.</blockquote>'
+          ].join('\n\n'),
+          {
+            reply_markup: {
+              inline_keyboard: [[
+                ...(task.file_url ? [{ text: '📥 Get files', url: task.file_url }] : []),
+                { text: '✖ Close', callback_data: 'user_close_delivery' }
+              ]]
+            }
+          }
         );
       } catch (error) {
         if (!isAlreadyDeleted(error)) throw error;

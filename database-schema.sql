@@ -186,11 +186,15 @@ CREATE TABLE IF NOT EXISTS scheduled_message_deletions (
     telegram_chat_id TEXT NOT NULL,
     file_message_id BIGINT NOT NULL,
     notice_message_id BIGINT NOT NULL,
+    file_url TEXT NOT NULL,
     due_at TIMESTAMP WITH TIME ZONE NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'processing', 'completed')),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     UNIQUE (telegram_chat_id, file_message_id)
 );
+
+ALTER TABLE scheduled_message_deletions
+    ADD COLUMN IF NOT EXISTS file_url TEXT;
 
 CREATE TABLE IF NOT EXISTS user_favorites (
     id TEXT PRIMARY KEY DEFAULT md5(random()::text || clock_timestamp()::text),
